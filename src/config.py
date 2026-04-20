@@ -7,7 +7,7 @@
 #                  (>=40%) and Phase 3 threshold (>=70%).
 #                  PyTorch 2.x official documentation.
 # AUTHOR: Guillermo Carvajal Vaca — UCB MSc Data Science & AI
-# VERSION: 1.1.0
+# VERSION: 1.2.0
 # ============================================================
 from __future__ import annotations
 
@@ -33,20 +33,24 @@ _IN_COLAB: bool = (
 )
 
 if _IN_COLAB:
-    BASE_PATH: Path = Path(
-        "/content/landmark-classifier"
-    )
-    # Why /content/drive/MyDrive: Google Drive mounts at this path in Colab.
-    # Windows G:\ path is only valid on local machine with Drive desktop sync.
-    DATASET_PATH: Path = Path(
-        "/content/drive/MyDrive/Maestria Ciencia de Datos/DEEP_LEARNING/PROJECT_01/landmark_images"
-    )
+    # Why Drive path for all artifacts:
+    # /content/ is ephemeral — wiped on every runtime restart.
+    # /content/drive/MyDrive/ persists across sessions — mandatory
+    # for checkpoints and experiment artifacts that take hours to generate.
+    DRIVE_ROOT    : Path = Path("/content/drive/MyDrive/Maestria Ciencia de Datos/DEEP_LEARNING/PROJECT_01")
+    BASE_PATH     : Path = Path("/content/landmark-classifier")
+    DATASET_PATH  : Path = DRIVE_ROOT / "landmark_images"
+    EXPERIMENTS_DIR: Path = DRIVE_ROOT / "landmark-classifier" / "experiments"
+    MODELS_DIR    : Path = DRIVE_ROOT / "landmark-classifier" / "models"
+    DOCS_DIR      : Path = DRIVE_ROOT / "landmark-classifier" / "docs"
 else:
-    BASE_PATH = Path(__file__).resolve().parent.parent
-    # Why G:\My Drive: local Windows path where Drive desktop syncs the dataset.
-    DATASET_PATH = Path(
+    BASE_PATH     = Path(__file__).resolve().parent.parent
+    DATASET_PATH  = Path(
         r"G:\My Drive\Maestria Ciencia de Datos\DEEP_LEARNING\PROJECT_01\landmark_images"
     )
+    EXPERIMENTS_DIR: Path = BASE_PATH / "experiments"
+    MODELS_DIR    : Path = BASE_PATH / "models"
+    DOCS_DIR      : Path = BASE_PATH / "docs"
 
 logger.debug("Runtime: %s | BASE_PATH: %s", "Colab" if _IN_COLAB else "Local", BASE_PATH)
 
@@ -55,12 +59,9 @@ logger.debug("Runtime: %s | BASE_PATH: %s", "Colab" if _IN_COLAB else "Local", B
 # Why separate DATASET_PATH from BASE_PATH: dataset is never committed
 # to the repo (rubric: -1 pt). BASE_PATH -> repo | DATASET_PATH -> data.
 # ---------------------------------------------------------------------------
-TRAIN_DIR       : Path = DATASET_PATH / "train"
-TEST_DIR        : Path = DATASET_PATH / "test"
-EXTERNAL_DIR    : Path = BASE_PATH / "data" / "external"
-EXPERIMENTS_DIR : Path = BASE_PATH / "experiments"
-MODELS_DIR      : Path = BASE_PATH / "models"
-DOCS_DIR        : Path = BASE_PATH / "docs"
+TRAIN_DIR    : Path = DATASET_PATH / "train"
+TEST_DIR     : Path = DATASET_PATH / "test"
+EXTERNAL_DIR : Path = BASE_PATH / "data" / "external"
 
 # ---------------------------------------------------------------------------
 # GLOBAL HYPERPARAMETERS
@@ -104,11 +105,13 @@ RESIZE_SIZE   : int = 256
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    print(f"BASE_PATH   : {BASE_PATH}")
-    print(f"DEVICE      : {DEVICE}")
-    print(f"IN_COLAB    : {_IN_COLAB}")
-    print(f"TRAIN_DIR   : {TRAIN_DIR}  exists={TRAIN_DIR.exists()}")
-    print(f"TEST_DIR    : {TEST_DIR}   exists={TEST_DIR.exists()}")
+    print(f"BASE_PATH       : {BASE_PATH}")
+    print(f"DEVICE          : {DEVICE}")
+    print(f"IN_COLAB        : {_IN_COLAB}")
+    print(f"TRAIN_DIR       : {TRAIN_DIR}  exists={TRAIN_DIR.exists()}")
+    print(f"TEST_DIR        : {TEST_DIR}   exists={TEST_DIR.exists()}")
+    print(f"EXPERIMENTS_DIR : {EXPERIMENTS_DIR}")
+    print(f"MODELS_DIR      : {MODELS_DIR}")
     if not TRAIN_DIR.exists():
         logger.warning("TRAIN_DIR not found — verify Google Drive sync")
     if not TEST_DIR.exists():
