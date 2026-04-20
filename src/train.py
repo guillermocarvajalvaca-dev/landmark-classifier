@@ -1,12 +1,13 @@
 ﻿# ============================================================
 # MODULE: train.py
 # PURPOSE: Training loop, validation, and run_experiment().
-#          Generates all artifacts automatically per run.
+#          Generates and VERIFIES all artifacts automatically
+#          per run. Artifacts saved to Drive in Colab.
 # NORMATIVE BASIS: UCB Project 5 rubric — Phase 2: >=30 epochs,
 #                  loss/accuracy curves per epoch, save best
 #                  model on val_loss, export with TorchScript.
 # AUTHOR: Guillermo Carvajal Vaca — UCB MSc Data Science & AI
-# VERSION: 1.1.0
+# VERSION: 1.2.0
 # ============================================================
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ from __future__ import annotations
 import importlib
 import logging
 import time
+from pathlib import Path
 from typing import Any, Tuple
 
 # --- third-party (alphabetical) ---
@@ -27,6 +29,7 @@ from torch.utils.data import DataLoader
 # --- local (alphabetical) ---
 from src.config import (
     DEVICE,
+    EXPERIMENTS_DIR,
     MODELS_DIR,
     SCRATCH_EPOCHS,
     SCRATCH_LR,
@@ -54,15 +57,14 @@ def _get_visualization():
     return src.visualization
 
 
-def _display_inline(path: str) -> None:
+def _display_inline(path: Path) -> None:
     """
     Display a saved PNG inline in Colab or Jupyter.
 
     Args:
-        path: Absolute path to the PNG file to display.
+        path: Path to the PNG file to display.
 
     Why display after saving:
-        Colab renders matplotlib figures when plt.show() is called.
         Saving first guarantees the artifact exists on disk regardless
         of whether the inline display succeeds.
     """
@@ -75,6 +77,44 @@ def _display_inline(path: str) -> None:
         plt.show()
     except Exception as e:
         logger.warning("Inline display failed: %s — artifact saved to disk", e)
+
+
+def _verify_artifacts(exp_id: str) -> None:
+    """
+    Verify all expected artifacts were saved after an experiment.
+
+    Args:
+        exp_id: Experiment identifier to check.
+
+    Why verify after saving:
+        Silent write failures can occur on Drive — the file appears to save
+        but is empty or missing. Explicit verification catches this before
+        the next experiment overwrites the checkpoint slot.
+
+    Raises:
+        FileNotFoundError: If any expected artifact is missing.
+    """
+    expected = [
+        EXPERIMENTS_DIR / f"{exp_id}_metrics.json",
+        EXPERIMENTS_DIR / f"{exp_id}_narrative.png",
+        MODELS_DIR      / f"{exp_id}_best.pt",
+        MODELS_DIR      / f"{exp_id}_scripted.pt",
+    ]
+    print(f"\n--- Artifact verification: {exp_id} ---")
+    all_ok = True
+    for path in expected:
+        exists = path.exists()
+        status = "OK" if exists else "MISSING"
+        print(f"  [{status}] {path.name}")
+        if not exists:
+            all_ok = False
+
+    if not all_ok:
+        raise FileNotFoundError(
+            f"One or more artifacts missing for {exp_id}. "
+            "Check Drive connection and re-run the experiment."
+        )
+    print(f"  All artifacts verified OK\n")
 
 
 def train_one_epoch(
@@ -144,7 +184,7 @@ def validate(
     Why torch.no_grad():
         During inference the computation graph is not needed.
         Disabling it saves ~50% VRAM and speeds up evaluation —
-        critical on Colab T4 where VRAM is shared with the OS.
+        critical when VRAM is shared with other processes.
     """
     model.eval()
     running_loss = 0.0
@@ -182,11 +222,11 @@ def run_experiment(
     """
     Execute a full training run and persist all artifacts automatically.
 
-    Every call produces:
-        - {exp_id}_metrics.json      (hyperparams + curves + test result)
-        - {exp_id}_narrative.png     (BI-grade loss + accuracy plot, inline display)
-        - {exp_id}_best.pt           (best checkpoint by val_loss)
-        - {exp_id}_scripted.pt       (TorchScript — no model.py dependency)
+    Every call produces and VERIFIES:
+        - {exp_id}_metrics.json        (hyperparams + curves + test result)
+        - {exp_id}_narrative.png       (BI-grade loss + accuracy plot inline)
+        - {exp_id}_best.pt             (best checkpoint by val_loss)
+        - {exp_id}_scripted.pt         (TorchScript — no model.py dependency)
         - {exp_id}_EXECUTIVE_REPORT.md (automatic narrative report)
 
     Args:
@@ -210,6 +250,9 @@ def run_experiment(
     """
     set_seed(SEED)
     model = model.to(DEVICE)
+
+    EXPERIMENTS_DIR.mkdir(parents=True, exist_ok=True)
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
     # --- Optimizer with optional differentiated LR ---
     if lr_backbone is not None:
@@ -240,13 +283,13 @@ def run_experiment(
     val_accs     : list[float] = []
 
     best_val_loss   = float("inf")
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
     best_model_path = MODELS_DIR / f"{exp_id}_best.pt"
 
     print(f"\n{'='*62}")
     print(f"  EXPERIMENT : {exp_id}")
     print(f"  Epochs     : {epochs} | LR head: {lr} | LR backbone: {lr_backbone}")
     print(f"  Device     : {DEVICE}")
+    print(f"  Artifacts  -> {EXPERIMENTS_DIR}")
     print(f"{'='*62}")
 
     t_start = time.time()
@@ -263,9 +306,6 @@ def run_experiment(
         train_accs.append(tr_acc)
         val_accs.append(vl_acc)
 
-        # Save checkpoint only when val_loss improves
-        # Why val_loss and not val_acc: loss is smoother and less sensitive
-        # to class imbalance — more reliable early stopping signal.
         is_best = vl_loss < best_val_loss
         if is_best:
             best_val_loss = vl_loss
@@ -281,7 +321,6 @@ def run_experiment(
 
     t_total = time.time() - t_start
 
-    # --- Load best checkpoint for final test evaluation ---
     model.load_state_dict(torch.load(best_model_path, weights_only=True))
     test_loss, test_acc = validate(model, test_loader, criterion)
 
@@ -293,8 +332,6 @@ def run_experiment(
     print(f"{'='*62}\n")
 
     # --- TorchScript export ---
-    # Why torch.jit.trace and not script: trace follows one execution path
-    # through the model — sufficient for inference on fixed-shape inputs.
     model.eval()
     scripted_path = MODELS_DIR / f"{exp_id}_scripted.pt"
     example_input = torch.zeros(1, 3, 224, 224).to(DEVICE)
@@ -338,14 +375,12 @@ def run_experiment(
 
     save_metrics(exp_id, metrics)
 
-    # --- Generate and display BI narrative plot ---
-    # Why reload visualization module: ensures latest fix is active
-    # even if the module was imported before a git pull in this session.
-    viz = _get_visualization()
+    # --- Generate BI narrative plot and display inline ---
+    viz            = _get_visualization()
     narrative_path = viz.plot_training_narrative(
         exp_id, train_losses, val_losses, train_accs, val_accs
     )
-    _display_inline(str(narrative_path))
+    _display_inline(narrative_path)
 
     # --- Generate executive report ---
     import numpy as np
@@ -358,5 +393,8 @@ def run_experiment(
         cm           = np.zeros((len(class_names), len(class_names)), dtype=int),
         test_acc     = test_acc,
     )
+
+    # --- Verify all artifacts saved correctly ---
+    _verify_artifacts(exp_id)
 
     return metrics
