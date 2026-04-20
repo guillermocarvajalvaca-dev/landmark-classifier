@@ -2,11 +2,11 @@
 # SCRIPT: scripts/create_notebooks.py
 # PURPOSE: Programmatically generate all 4 project notebooks.
 #          Notebooks always load from GitHub — artifacts always
-#          persist to Google Drive. No stale copies in Drive.
+#          persist to Google Drive. Metrics always loaded from
+#          JSON to survive runtime restarts.
 # NORMATIVE BASIS: UCB Project 5 rubric — 4 notebooks required.
-#                  All cells must be executed before submission.
 # AUTHOR: Guillermo Carvajal Vaca — UCB MSc Data Science & AI
-# VERSION: 1.2.0
+# VERSION: 1.3.0
 # ============================================================
 from __future__ import annotations
 
@@ -26,16 +26,6 @@ NOTEBOOKS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------------------------
 # SHARED CELL TEMPLATES
-# Why SETUP_CELL is shared across all notebooks:
-#     Every notebook needs the same environment — Drive mount, repo clone
-#     OR pull, and plotnine install. Centralizing it guarantees one fix
-#     propagates to all 4 notebooks without touching them individually.
-#
-# Why git pull when repo already exists:
-#     Colab keeps /content/ between sessions in the same runtime.
-#     Without pull, stale src/ modules run even after commits to GitHub.
-#     The pull ensures visualization.py, evaluate.py, train.py are always
-#     the latest version before any cell executes.
 # ---------------------------------------------------------------------------
 SETUP_CELL = (
     "# ── Cell 0A: Environment setup (Drive + GitHub) ────────────\n"
@@ -49,15 +39,12 @@ SETUP_CELL = (
     "    from google.colab import drive\n"
     "    drive.mount('/content/drive')\n"
     "    if not os.path.exists('/content/landmark-classifier'):\n"
-    "        # First session: clone the full repo\n"
     "        subprocess.run([\n"
     "            'git', 'clone',\n"
     "            'https://github.com/guillermocarvajalvaca-dev/landmark-classifier.git',\n"
     "            '/content/landmark-classifier'\n"
     "        ], check=True)\n"
     "    else:\n"
-    "        # Subsequent sessions: pull latest commits (src/ updates)\n"
-    "        # Why: without pull, stale modules run even after GitHub commits\n"
     "        subprocess.run([\n"
     "            'git', '-C', '/content/landmark-classifier',\n"
     "            'pull', 'origin', 'master'\n"
@@ -70,70 +57,15 @@ SETUP_CELL = (
     "    print('Local environment detected')\n"
 )
 
-CONFIG_CELL_02 = (
-    "# ── Cell 1: Environment setup ──────────────────────────────\n"
-    "import logging\n"
-    "import os\n"
-    "import sys\n"
-    "from pathlib import Path\n\n"
-    "logging.basicConfig(level=logging.INFO)\n\n"
-    "from src.config import (\n"
-    "    DEVICE, SCRATCH_EPOCHS, SCRATCH_LR,\n"
-    "    SCRATCH_SCHEDULER_GAMMA, SCRATCH_SCHEDULER_STEP, SEED,\n"
-    ")\n"
-    "from src.utils import set_seed\n\n"
-    "set_seed(SEED)\n"
-    "print(f'Device          : {DEVICE}')\n"
-    "print(f'Epochs          : {SCRATCH_EPOCHS}')\n"
-    "print(f'LR              : {SCRATCH_LR}')\n"
-    "print(f'EXPERIMENTS_DIR : ')\n"
-    "from src.config import EXPERIMENTS_DIR, MODELS_DIR\n"
-    "print(f'  {EXPERIMENTS_DIR}')\n"
-    "print(f'MODELS_DIR      : {MODELS_DIR}')\n"
-)
-
-CONFIG_CELL_03 = (
-    "# ── Cell 1: Environment setup ──────────────────────────────\n"
-    "import logging\n"
-    "import os\n"
-    "import sys\n"
-    "from pathlib import Path\n\n"
-    "logging.basicConfig(level=logging.INFO)\n\n"
-    "from src.config import (\n"
-    "    DEVICE, SEED,\n"
-    "    TL_EPOCHS_FINETUNE, TL_EPOCHS_FROZEN,\n"
-    "    TL_LR_BACKBONE, TL_LR_HEAD,\n"
-    "    EXPERIMENTS_DIR, MODELS_DIR,\n"
-    ")\n"
-    "from src.utils import set_seed\n\n"
-    "set_seed(SEED)\n"
-    "print(f'Device          : {DEVICE}')\n"
-    "print(f'Epochs frozen   : {TL_EPOCHS_FROZEN}')\n"
-    "print(f'Epochs finetune : {TL_EPOCHS_FINETUNE}')\n"
-    "print(f'LR head         : {TL_LR_HEAD}')\n"
-    "print(f'LR backbone     : {TL_LR_BACKBONE}')\n"
-    "print(f'EXPERIMENTS_DIR : {EXPERIMENTS_DIR}')\n"
-    "print(f'MODELS_DIR      : {MODELS_DIR}')\n"
-)
-
-CONFIG_CELL_04 = (
-    "# ── Cell 1: Environment setup ──────────────────────────────\n"
-    "import logging\n"
-    "import os\n"
-    "import sys\n"
-    "from pathlib import Path\n\n"
-    "logging.basicConfig(level=logging.INFO)\n\n"
-    "from src.config import (\n"
-    "    DEVICE, SEED, EXTERNAL_DIR, MODELS_DIR, EXPERIMENTS_DIR,\n"
-    ")\n"
-    "from src.utils import set_seed\n\n"
-    "set_seed(SEED)\n"
-    "scripted_models = sorted(MODELS_DIR.glob('*_scripted.pt'))\n"
-    "print(f'Device          : {DEVICE}')\n"
-    "print(f'MODELS_DIR      : {MODELS_DIR}')\n"
-    "print('Available TorchScript models:')\n"
-    "for m in scripted_models:\n"
-    "    print(f'  {m.name}')\n"
+LOAD_METRICS_HELPER = (
+    "# ── load_metrics helper ─────────────────────────────────────\n"
+    "# Why load from JSON: metrics dicts are lost on runtime restart.\n"
+    "# Drive JSON files are the persistent source of truth.\n"
+    "import json\n\n"
+    "def load_metrics(exp_id: str) -> dict:\n"
+    "    path = EXPERIMENTS_DIR / f'{exp_id}_metrics.json'\n"
+    "    with open(path) as f:\n"
+    "        return json.load(f)\n"
 )
 
 DATALOADER_CELL = (
@@ -156,10 +88,6 @@ def _save_notebook(nb: nbformat.NotebookNode, filename: str) -> Path:
 
     Returns:
         Path to the saved notebook.
-
-    Why validate before saving:
-        An invalid .ipynb silently fails to open in Jupyter or Colab.
-        Validating here catches structural errors before runtime.
     """
     nbformat.validate(nb)
     out_path = NOTEBOOKS_DIR / filename
@@ -170,7 +98,6 @@ def _save_notebook(nb: nbformat.NotebookNode, filename: str) -> Path:
 
 
 def _kernel_metadata() -> dict:
-    """Return standard kernel metadata for all notebooks."""
     return {
         "display_name": "Python (landmark-venv)",
         "language": "python",
@@ -231,7 +158,6 @@ def create_01_exploration() -> Path:
         new_markdown_cell("## 2. Class Distribution — BI Visualization"),
         new_code_cell(
             "# ── Cell 3: BI class distribution plot ─────────────────────\n"
-            "# UCB palette: Gold = majority classes (>1.5x mean) — bias source\n"
             "import matplotlib.pyplot as plt\n"
             "import numpy as np\n\n"
             "UCB_BLUE      = '#003262'\n"
@@ -323,7 +249,7 @@ def create_01_exploration() -> Path:
             "| >=5 sample images displayed + saved to Drive | ✅ |\n"
             "| DataLoaders: batch shape [B, 3, 224, 224] | ✅ |\n"
             "| Augmentation preview saved to Drive | ✅ |\n\n"
-            "**Next step:** `02_cnn_from_scratch.ipynb` — Phase 2 on Colab A100."
+            "**Next step:** `02_cnn_from_scratch.ipynb`"
         ),
     ]
     nb = new_notebook(cells=cells)
@@ -348,13 +274,28 @@ def create_02_cnn_scratch() -> Path:
             "> Run on Google Colab A100. Artifacts auto-saved to Drive."
         ),
         new_code_cell(SETUP_CELL),
-        new_code_cell(CONFIG_CELL_02),
+        new_code_cell(
+            "# ── Cell 1: Environment setup ──────────────────────────────\n"
+            "import logging\n"
+            "from src.config import (\n"
+            "    DEVICE, EXPERIMENTS_DIR, MODELS_DIR, SCRATCH_EPOCHS, SCRATCH_LR,\n"
+            "    SCRATCH_SCHEDULER_GAMMA, SCRATCH_SCHEDULER_STEP, SEED,\n"
+            ")\n"
+            "from src.utils import set_seed\n\n"
+            "logging.basicConfig(level=logging.INFO)\n"
+            "set_seed(SEED)\n"
+            "EXPERIMENTS_DIR.mkdir(parents=True, exist_ok=True)\n"
+            "MODELS_DIR.mkdir(parents=True, exist_ok=True)\n"
+            "print(f'Device          : {DEVICE}')\n"
+            "print(f'Epochs          : {SCRATCH_EPOCHS}')\n"
+            "print(f'LR              : {SCRATCH_LR}')\n"
+            "print(f'EXPERIMENTS_DIR : {EXPERIMENTS_DIR}')\n"
+            "print(f'MODELS_DIR      : {MODELS_DIR}')\n"
+        ),
         new_code_cell(DATALOADER_CELL),
         new_markdown_cell("## 1. Architecture Sanity Check"),
         new_code_cell(
             "# ── Cell 3: Architecture sanity check ──────────────────────\n"
-            "# Why run before training: shape mismatches raise cryptic CUDA\n"
-            "# errors mid-epoch. Catching here costs milliseconds.\n"
             "import torch\n"
             "from src.model import CNNScratch, count_params\n\n"
             "model = CNNScratch(num_classes=len(class_names))\n"
@@ -364,16 +305,12 @@ def create_02_cnn_scratch() -> Path:
             "print(f'Output shape: {output.shape}  -> expected [2, {len(class_names)}]')\n"
             "assert output.shape == (2, len(class_names)), 'Shape mismatch'\n"
         ),
-        new_markdown_cell(
-            "## 2. Experiment E1 — Baseline\n\n"
-            "**Hypothesis:** Baseline CNN establishes the reference accuracy.\n"
-            "**Ablation rule:** ONE factor per experiment."
-        ),
+        new_markdown_cell("## 2. Experiment E1 — Baseline"),
         new_code_cell(
             "# ── Cell 4: Experiment E1 — baseline ───────────────────────\n"
             "from src.model import CNNScratch\n"
             "from src.train import run_experiment\n\n"
-            "model_e1  = CNNScratch(num_classes=len(class_names))\n"
+            "model_e1   = CNNScratch(num_classes=len(class_names))\n"
             "metrics_e1 = run_experiment(\n"
             "    exp_id       = 'E1_scratch_baseline',\n"
             "    model        = model_e1,\n"
@@ -387,15 +324,12 @@ def create_02_cnn_scratch() -> Path:
             ")\n"
             "print(f'E1 Test Accuracy: {metrics_e1[\"results\"][\"test_accuracy\"]*100:.2f}%')\n"
         ),
-        new_markdown_cell(
-            "## 3. Experiment E2 — Augmentation\n\n"
-            "**Single factor changed from E1:** augmentation explicitly confirmed active."
-        ),
+        new_markdown_cell("## 3. Experiment E2 — Augmentation"),
         new_code_cell(
             "# ── Cell 5: Experiment E2 — augmentation ───────────────────\n"
             "from src.model import CNNScratch\n"
             "from src.train import run_experiment\n\n"
-            "model_e2  = CNNScratch(num_classes=len(class_names))\n"
+            "model_e2   = CNNScratch(num_classes=len(class_names))\n"
             "metrics_e2 = run_experiment(\n"
             "    exp_id       = 'E2_scratch_augmented',\n"
             "    model        = model_e2,\n"
@@ -409,15 +343,12 @@ def create_02_cnn_scratch() -> Path:
             ")\n"
             "print(f'E2 Test Accuracy: {metrics_e2[\"results\"][\"test_accuracy\"]*100:.2f}%')\n"
         ),
-        new_markdown_cell(
-            "## 4. Experiment E3 — Lower LR\n\n"
-            "**Single factor changed from E2:** lr 1e-3 -> 1e-4."
-        ),
+        new_markdown_cell("## 4. Experiment E3 — Lower LR"),
         new_code_cell(
             "# ── Cell 6: Experiment E3 — lower LR ───────────────────────\n"
             "from src.model import CNNScratch\n"
             "from src.train import run_experiment\n\n"
-            "model_e3  = CNNScratch(num_classes=len(class_names))\n"
+            "model_e3   = CNNScratch(num_classes=len(class_names))\n"
             "metrics_e3 = run_experiment(\n"
             "    exp_id       = 'E3_scratch_lower_lr',\n"
             "    model        = model_e3,\n"
@@ -427,13 +358,23 @@ def create_02_cnn_scratch() -> Path:
             "    class_names  = class_names,\n"
             "    epochs       = SCRATCH_EPOCHS,\n"
             "    lr           = 1e-4,\n"
-            "    extra_params = {'architecture': 'CNNScratch_5conv_BN', 'augmentation': True, 'lr_reason': 'stable convergence'},\n"
+            "    extra_params = {'architecture': 'CNNScratch_5conv_BN', 'augmentation': True},\n"
             ")\n"
             "print(f'E3 Test Accuracy: {metrics_e3[\"results\"][\"test_accuracy\"]*100:.2f}%')\n"
         ),
         new_code_cell(
             "# ── Cell 7: Comparative table Phase 2 ──────────────────────\n"
+            "# Why load from JSON: metrics dicts lost on runtime restart.\n"
+            "# Drive JSON files are the persistent source of truth.\n"
+            "import json\n"
             "import pandas as pd\n\n"
+            "def load_metrics(exp_id: str) -> dict:\n"
+            "    with open(EXPERIMENTS_DIR / f'{exp_id}_metrics.json') as f:\n"
+            "        return json.load(f)\n\n"
+            "# Load from Drive — survives runtime restart\n"
+            "m_e1 = load_metrics('E1_scratch_baseline')\n"
+            "m_e2 = load_metrics('E2_scratch_augmented')\n"
+            "m_e3 = load_metrics('E3_scratch_lower_lr')\n\n"
             "results = pd.DataFrame([\n"
             "    {\n"
             "        'Experiment' : m['exp_id'],\n"
@@ -442,20 +383,24 @@ def create_02_cnn_scratch() -> Path:
             "        'Time (min)' : m['results']['total_time_min'],\n"
             "        'Meets >=40%': '✅' if m['results']['test_accuracy'] >= 0.40 else '❌',\n"
             "    }\n"
-            "    for m in [metrics_e1, metrics_e2, metrics_e3]\n"
+            "    for m in [m_e1, m_e2, m_e3]\n"
             "])\n"
             "print(results.to_string(index=False))\n"
         ),
         new_code_cell(
             "# ── Cell 8: Full evaluation best scratch model ──────────────\n"
-            "# Why: generates BI confusion matrix + executive report.\n"
-            "# model.to(DEVICE) handled inside full_evaluation (evaluate.py v1.2.0)\n"
+            "# Why load from JSON: survives runtime restart.\n"
+            "# Why .to(DEVICE) inside full_evaluation: handles CPU checkpoint\n"
+            "# loaded onto GPU tensors (evaluate.py v1.2.0).\n"
             "import torch\n"
-            "from src.config import MODELS_DIR\n"
             "from src.evaluate import full_evaluation\n"
             "from src.model import CNNScratch\n\n"
-            "best = max([metrics_e1, metrics_e2, metrics_e3],\n"
-            "           key=lambda m: m['results']['test_accuracy'])\n"
+            "all_scratch = [\n"
+            "    load_metrics('E1_scratch_baseline'),\n"
+            "    load_metrics('E2_scratch_augmented'),\n"
+            "    load_metrics('E3_scratch_lower_lr'),\n"
+            "]\n"
+            "best = max(all_scratch, key=lambda m: m['results']['test_accuracy'])\n"
             "print(f'Best: {best[\"exp_id\"]} — {best[\"results\"][\"test_accuracy\"]*100:.2f}%')\n\n"
             "best_model = CNNScratch(num_classes=len(class_names))\n"
             "best_model.load_state_dict(\n"
@@ -506,7 +451,27 @@ def create_03_transfer_learning() -> Path:
             "> Run on Google Colab A100. Artifacts auto-saved to Drive."
         ),
         new_code_cell(SETUP_CELL),
-        new_code_cell(CONFIG_CELL_03),
+        new_code_cell(
+            "# ── Cell 1: Environment setup ──────────────────────────────\n"
+            "import logging\n"
+            "from src.config import (\n"
+            "    DEVICE, EXPERIMENTS_DIR, MODELS_DIR, SEED,\n"
+            "    TL_EPOCHS_FINETUNE, TL_EPOCHS_FROZEN,\n"
+            "    TL_LR_BACKBONE, TL_LR_HEAD,\n"
+            ")\n"
+            "from src.utils import set_seed\n\n"
+            "logging.basicConfig(level=logging.INFO)\n"
+            "set_seed(SEED)\n"
+            "EXPERIMENTS_DIR.mkdir(parents=True, exist_ok=True)\n"
+            "MODELS_DIR.mkdir(parents=True, exist_ok=True)\n"
+            "print(f'Device          : {DEVICE}')\n"
+            "print(f'Epochs frozen   : {TL_EPOCHS_FROZEN}')\n"
+            "print(f'Epochs finetune : {TL_EPOCHS_FINETUNE}')\n"
+            "print(f'LR head         : {TL_LR_HEAD}')\n"
+            "print(f'LR backbone     : {TL_LR_BACKBONE}')\n"
+            "print(f'EXPERIMENTS_DIR : {EXPERIMENTS_DIR}')\n"
+            "print(f'MODELS_DIR      : {MODELS_DIR}')\n"
+        ),
         new_code_cell(DATALOADER_CELL),
         new_markdown_cell(
             "## 1. Model Selection — Written Justification\n\n"
@@ -531,7 +496,7 @@ def create_03_transfer_learning() -> Path:
             "# ── Cell 4: Experiment E4 — ResNet18 frozen ────────────────\n"
             "from src.model import get_transfer_model\n"
             "from src.train import run_experiment\n\n"
-            "model_e4  = get_transfer_model('resnet18', num_classes=len(class_names), strategy='frozen')\n"
+            "model_e4   = get_transfer_model('resnet18', num_classes=len(class_names), strategy='frozen')\n"
             "metrics_e4 = run_experiment(\n"
             "    exp_id       = 'E4_resnet18_frozen',\n"
             "    model        = model_e4,\n"
@@ -549,7 +514,7 @@ def create_03_transfer_learning() -> Path:
             "# ── Cell 5: Experiment E5 — ResNet18 finetune ──────────────\n"
             "from src.model import get_transfer_model\n"
             "from src.train import run_experiment\n\n"
-            "model_e5  = get_transfer_model('resnet18', num_classes=len(class_names), strategy='finetune')\n"
+            "model_e5   = get_transfer_model('resnet18', num_classes=len(class_names), strategy='finetune')\n"
             "metrics_e5 = run_experiment(\n"
             "    exp_id       = 'E5_resnet18_finetune_layer4',\n"
             "    model        = model_e5,\n"
@@ -568,7 +533,7 @@ def create_03_transfer_learning() -> Path:
             "# ── Cell 6: Experiment E6 — ResNet50 frozen ────────────────\n"
             "from src.model import get_transfer_model\n"
             "from src.train import run_experiment\n\n"
-            "model_e6  = get_transfer_model('resnet50', num_classes=len(class_names), strategy='frozen')\n"
+            "model_e6   = get_transfer_model('resnet50', num_classes=len(class_names), strategy='frozen')\n"
             "metrics_e6 = run_experiment(\n"
             "    exp_id       = 'E6_resnet50_frozen',\n"
             "    model        = model_e6,\n"
@@ -584,14 +549,18 @@ def create_03_transfer_learning() -> Path:
         ),
         new_code_cell(
             "# ── Cell 7: Full comparative table Scratch vs Transfer ──────\n"
+            "# Why load from JSON: all metrics survive runtime restart.\n"
             "import json\n"
             "import pandas as pd\n\n"
             "def load_metrics(exp_id: str) -> dict:\n"
             "    with open(EXPERIMENTS_DIR / f'{exp_id}_metrics.json') as f:\n"
             "        return json.load(f)\n\n"
-            "metrics_e1 = load_metrics('E1_scratch_baseline')\n"
-            "metrics_e2 = load_metrics('E2_scratch_augmented')\n"
-            "metrics_e3 = load_metrics('E3_scratch_lower_lr')\n\n"
+            "m_e1 = load_metrics('E1_scratch_baseline')\n"
+            "m_e2 = load_metrics('E2_scratch_augmented')\n"
+            "m_e3 = load_metrics('E3_scratch_lower_lr')\n"
+            "m_e4 = load_metrics('E4_resnet18_frozen')\n"
+            "m_e5 = load_metrics('E5_resnet18_finetune_layer4')\n"
+            "m_e6 = load_metrics('E6_resnet50_frozen')\n\n"
             "all_results = pd.DataFrame([\n"
             "    {\n"
             "        'Model'        : m['exp_id'],\n"
@@ -604,17 +573,22 @@ def create_03_transfer_learning() -> Path:
             "            else m['results']['test_accuracy'] >= 0.40\n"
             "        ) else '❌',\n"
             "    }\n"
-            "    for m in [metrics_e1, metrics_e2, metrics_e3, metrics_e4, metrics_e5, metrics_e6]\n"
+            "    for m in [m_e1, m_e2, m_e3, m_e4, m_e5, m_e6]\n"
             "])\n"
             "print(all_results.to_string(index=False))\n"
         ),
         new_code_cell(
             "# ── Cell 8: Full evaluation best transfer model ─────────────\n"
+            "# Why load from JSON: survives runtime restart.\n"
             "import torch\n"
             "from src.evaluate import full_evaluation\n"
             "from src.model import get_transfer_model\n\n"
-            "best_tl = max([metrics_e4, metrics_e5, metrics_e6],\n"
-            "              key=lambda m: m['results']['test_accuracy'])\n"
+            "tl_metrics = [\n"
+            "    load_metrics('E4_resnet18_frozen'),\n"
+            "    load_metrics('E5_resnet18_finetune_layer4'),\n"
+            "    load_metrics('E6_resnet50_frozen'),\n"
+            "]\n"
+            "best_tl = max(tl_metrics, key=lambda m: m['results']['test_accuracy'])\n"
             "print(f'Best TL: {best_tl[\"exp_id\"]} — {best_tl[\"results\"][\"test_accuracy\"]*100:.2f}%')\n\n"
             "backbone = best_tl['hyperparameters'].get('backbone', 'resnet18')\n"
             "strategy = best_tl['hyperparameters'].get('strategy', 'frozen')\n"
@@ -674,10 +648,24 @@ def create_04_inference_app() -> Path:
             "> Run locally on PyCharm — inference is CPU-friendly."
         ),
         new_code_cell(SETUP_CELL),
-        new_code_cell(CONFIG_CELL_04),
+        new_code_cell(
+            "# ── Cell 1: Environment setup ──────────────────────────────\n"
+            "import logging\n"
+            "from src.config import (\n"
+            "    DEVICE, SEED, EXTERNAL_DIR, MODELS_DIR, EXPERIMENTS_DIR,\n"
+            ")\n"
+            "from src.utils import set_seed\n\n"
+            "logging.basicConfig(level=logging.INFO)\n"
+            "set_seed(SEED)\n"
+            "scripted_models = sorted(MODELS_DIR.glob('*_scripted.pt'))\n"
+            "print(f'Device          : {DEVICE}')\n"
+            "print(f'MODELS_DIR      : {MODELS_DIR}')\n"
+            "print('Available TorchScript models:')\n"
+            "for m in scripted_models:\n"
+            "    print(f'  {m.name}')\n"
+        ),
         new_code_cell(
             "# ── Cell 2: Select best TorchScript model ───────────────────\n"
-            "# Why TorchScript: self-contained graph — no model.py dependency.\n"
             "finetune_models = [m for m in scripted_models if 'finetune' in m.name]\n"
             "BEST_MODEL_PATH = finetune_models[-1] if finetune_models else scripted_models[-1]\n"
             "print(f'Using model: {BEST_MODEL_PATH.name}')\n"
