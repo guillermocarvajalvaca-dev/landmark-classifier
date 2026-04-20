@@ -7,11 +7,12 @@
 # NORMATIVE BASIS: UCB Project 5 rubric — Phase 2/3 curve
 #                  requirements. UCB corporate palette applied.
 # AUTHOR: Guillermo Carvajal Vaca — UCB MSc Data Science & AI
-# VERSION: 1.0.0
+# VERSION: 1.1.0
 # ============================================================
 from __future__ import annotations
 
 # --- stdlib (alphabetical) ---
+import io
 import logging
 import textwrap
 from pathlib import Path
@@ -40,6 +41,7 @@ from plotnine import (
     theme,
     theme_minimal,
 )
+from PIL import Image
 
 # --- local (alphabetical) ---
 from src.config import DOCS_DIR, EXPERIMENTS_DIR
@@ -48,8 +50,6 @@ logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # UCB CORPORATE PALETTE
-# Why these exact hex codes: institutional brand consistency across all
-# deliverables submitted to UCB.
 # #003262 = UCB Dark Blue  (primary)
 # #FDB515 = UCB Gold       (highlight / optimal point)
 # #C4820E = UCB Dark Gold  (warning / overfitting)
@@ -58,7 +58,7 @@ UCB_BLUE      : str = "#003262"
 UCB_GOLD      : str = "#FDB515"
 UCB_DARK_GOLD : str = "#C4820E"
 
-PRODUCTION_THRESHOLD : float = 0.85   # rubric bonus threshold
+PRODUCTION_THRESHOLD : float = 0.85
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +81,6 @@ def _detect_overfitting_epoch(val_losses: list[float], patience: int = 3) -> int
     """
     min_idx = int(np.argmin(val_losses))
     count   = 0
-
     for i in range(min_idx + 1, len(val_losses)):
         if val_losses[i] > val_losses[i - 1]:
             count += 1
@@ -89,7 +88,6 @@ def _detect_overfitting_epoch(val_losses: list[float], patience: int = 3) -> int
                 return (i - patience + 1) + 1
         else:
             count = 0
-
     return None
 
 
@@ -113,11 +111,10 @@ def _build_curve_dataframe(
 
     Why long format:
         plotnine maps aesthetics to columns. Long format lets us map
-        split to color with a single aes() call — no duplicated geom layers.
+        split to color with a single aes() call.
     """
     epochs  = list(range(1, len(train_losses) + 1))
     records = []
-
     for ep, tl, vl, ta, va in zip(epochs, train_losses, val_losses, train_accs, val_accs):
         records.extend([
             {"epoch": ep, "value": tl, "metric": "Loss",     "split": "Train"},
@@ -125,7 +122,6 @@ def _build_curve_dataframe(
             {"epoch": ep, "value": ta, "metric": "Accuracy", "split": "Train"},
             {"epoch": ep, "value": va, "metric": "Accuracy", "split": "Validation"},
         ])
-
     return pd.DataFrame(records)
 
 
@@ -151,6 +147,30 @@ def _ucb_theme() -> theme:
             panel_background = element_rect(fill="white"),
         )
     )
+
+
+def _plotnine_to_array(p, width: int = 800, height: int = 500) -> np.ndarray:
+    """
+    Convert a plotnine plot to a numpy RGB array for embedding in matplotlib.
+
+    Args:
+        p:      plotnine ggplot object.
+        width:  Output image width in pixels.
+        height: Output image height in pixels.
+
+    Returns:
+        NumPy array of shape (height, width, 3) with RGB values.
+
+    Why use PIL and io.BytesIO instead of tostring_rgb:
+        tostring_rgb() was removed in matplotlib >= 3.8.
+        Saving to a BytesIO buffer and reopening with PIL is the
+        version-agnostic replacement that works across all environments.
+    """
+    buf = io.BytesIO()
+    p.save(buf, format="png", width=width/100, height=height/100, dpi=100, verbose=False)
+    buf.seek(0)
+    img = Image.open(buf).convert("RGB")
+    return np.array(img)
 
 
 # ---------------------------------------------------------------------------
@@ -197,9 +217,9 @@ def plot_training_narrative(
         str(overfit_epoch) if overfit_epoch else "not detected",
     )
 
-    df       = _build_curve_dataframe(train_losses, val_losses, train_accs, val_accs)
-    df_loss  = df[df["metric"] == "Loss"].copy()
-    df_acc   = df[df["metric"] == "Accuracy"].copy()
+    df        = _build_curve_dataframe(train_losses, val_losses, train_accs, val_accs)
+    df_loss   = df[df["metric"] == "Loss"].copy()
+    df_acc    = df[df["metric"] == "Accuracy"].copy()
     color_map = {"Train": UCB_BLUE, "Validation": UCB_DARK_GOLD}
 
     # --- Loss panel ---
@@ -265,18 +285,14 @@ def plot_training_narrative(
         + _ucb_theme()
     )
 
-    # --- Render both panels side by side ---
+    # --- Render both panels using PIL buffer (matplotlib >= 3.8 compatible) ---
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
     fig.patch.set_facecolor("white")
 
     for p, ax in [(p_loss, ax1), (p_acc, ax2)]:
-        p_fig = p.draw()
-        p_fig.canvas.draw()
-        img = np.frombuffer(p_fig.canvas.tostring_rgb(), dtype=np.uint8)
-        img = img.reshape(p_fig.canvas.get_width_height()[::-1] + (3,))
-        ax.imshow(img)
+        img_arr = _plotnine_to_array(p)
+        ax.imshow(img_arr)
         ax.axis("off")
-        plt.close(p_fig)
 
     plt.tight_layout(pad=1.5)
     out_path = EXPERIMENTS_DIR / (exp_id + "_narrative.png")
@@ -306,6 +322,10 @@ def plot_confusion_matrix_bi(
 
     Returns:
         Path to the saved PNG artifact.
+
+    Why row normalization:
+        CM[i,j] / sum(CM[i,:]) shows what fraction of true class i was
+        predicted as class j. High diagonal = strong model.
     """
     EXPERIMENTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -313,7 +333,6 @@ def plot_confusion_matrix_bi(
     row_sums = cm.sum(axis=1, keepdims=True)
     cm_norm  = cm.astype(float) / (row_sums + 1e-8)
 
-    # Off-diagonal only: diagonal = correct predictions, not errors
     error_matrix = cm_norm.copy()
     np.fill_diagonal(error_matrix, 0)
 
@@ -395,9 +414,6 @@ def generate_executive_report(
     """
     Generate an automatic executive Markdown report from training metrics.
 
-    All insights and recommendations are derived programmatically —
-    no manual input required.
-
     Args:
         exp_id:       Experiment identifier.
         train_losses: Per-epoch training loss.
@@ -409,29 +425,36 @@ def generate_executive_report(
 
     Returns:
         Path to the generated Markdown report.
+
+    Why programmatic report generation:
+        Manual report writing introduces inconsistencies between
+        the written numbers and the actual metrics. Auto-generation
+        guarantees the report always reflects the real experiment results.
     """
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
 
-    optimal_epoch   = int(np.argmin(val_losses)) + 1
-    optimal_val_acc = val_accs[optimal_epoch - 1]
-    overfit_epoch   = _detect_overfitting_epoch(val_losses)
-    total_epochs    = len(val_losses)
-    gap             = val_losses[-1] - min(val_losses)
+    if len(val_losses) == 0:
+        optimal_epoch   = 0
+        optimal_val_acc = 0.0
+        overfit_epoch   = None
+        total_epochs    = 0
+        gap             = 0.0
+    else:
+        optimal_epoch   = int(np.argmin(val_losses)) + 1
+        optimal_val_acc = val_accs[optimal_epoch - 1] if val_accs else 0.0
+        overfit_epoch   = _detect_overfitting_epoch(val_losses)
+        total_epochs    = len(val_losses)
+        gap             = val_losses[-1] - min(val_losses)
 
-    row_sums    = cm.sum(axis=1)
-    per_class   = np.diag(cm) / (row_sums + 1e-8)
-    weak_idx    = np.argsort(per_class)[:3]
+    row_sums     = cm.sum(axis=1)
+    per_class    = np.diag(cm) / (row_sums + 1e-8)
+    weak_idx     = np.argsort(per_class)[:3]
     weak_classes = [class_names[i] for i in weak_idx]
 
     production_ready = test_acc >= PRODUCTION_THRESHOLD
     status_label     = "READY" if production_ready else "NOT READY"
-
-    overfit_str = (
-        "epoch " + str(overfit_epoch)
-        if overfit_epoch
-        else "not detected"
-    )
-    overfit_insight = (
+    overfit_str      = "epoch " + str(overfit_epoch) if overfit_epoch else "not detected"
+    overfit_insight  = (
         "Continuing training beyond that point degrades generalization "
         "— overfitting onset detected at epoch " + str(overfit_epoch) + "."
         if overfit_epoch
@@ -443,7 +466,7 @@ def generate_executive_report(
         else "Phase 2 threshold not met — review architecture and augmentation."
     )
 
-    report = textwrap.dedent(
+    report = (
         "# Executive Report — " + exp_id + "\n"
         "> Auto-generated by visualization.py | UCB MSc Data Science & AI\n\n"
         "## Production Readiness Assessment\n"
@@ -456,7 +479,8 @@ def generate_executive_report(
         + ("High" if gap > 0.1 else "Acceptable") + " |\n\n"
         "## Automatic Insight\n"
         "The model reaches a performance plateau at **epoch " + str(optimal_epoch) + "** "
-        "(val_loss = " + str(round(min(val_losses), 4)) + "). " + overfit_insight + "\n\n"
+        "(val_loss = " + str(round(min(val_losses), 4) if val_losses else 0) + "). "
+        + overfit_insight + "\n\n"
         "## Actionable Recommendations\n"
         "1. **Early Stopping**: Apply early stopping at epoch **"
         + str(overfit_epoch or optimal_epoch) + "**.\n"
