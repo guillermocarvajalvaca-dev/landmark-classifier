@@ -2,12 +2,13 @@
 # MODULE: visualization.py
 # PURPOSE: BI-grade training visualizations with narrative
 #          storytelling. Answers: "Is the model robust enough
-#          for production?" Replaces basic curve plotting with
-#          Grammar of Graphics (plotnine) + executive reports.
+#          for production?" Grammar of Graphics (plotnine) +
+#          UCB palette + automatic executive reports.
+#          Inline display integrated for Colab/Jupyter.
 # NORMATIVE BASIS: UCB Project 5 rubric — Phase 2/3 curve
 #                  requirements. UCB corporate palette applied.
 # AUTHOR: Guillermo Carvajal Vaca — UCB MSc Data Science & AI
-# VERSION: 1.1.0
+# VERSION: 1.2.0
 # ============================================================
 from __future__ import annotations
 
@@ -18,10 +19,12 @@ import textwrap
 from pathlib import Path
 
 # --- third-party (alphabetical) ---
+import matplotlib.image as mpimg
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from PIL import Image
 from plotnine import (
     aes,
     annotate,
@@ -41,7 +44,6 @@ from plotnine import (
     theme,
     theme_minimal,
 )
-from PIL import Image
 
 # --- local (alphabetical) ---
 from src.config import DOCS_DIR, EXPERIMENTS_DIR
@@ -59,6 +61,33 @@ UCB_GOLD      : str = "#FDB515"
 UCB_DARK_GOLD : str = "#C4820E"
 
 PRODUCTION_THRESHOLD : float = 0.85
+
+
+# ---------------------------------------------------------------------------
+# DISPLAY HELPER
+# ---------------------------------------------------------------------------
+def _display_inline(path: Path, figsize: tuple[int, int] = (16, 6)) -> None:
+    """
+    Display a saved PNG inline in Colab or Jupyter.
+
+    Args:
+        path:    Path to the PNG file to display.
+        figsize: Figure size for inline display.
+
+    Why display after saving:
+        Saving first guarantees the artifact exists on disk regardless
+        of whether the inline display succeeds in the current environment.
+    """
+    try:
+        img = mpimg.imread(str(path))
+        plt.figure(figsize=figsize)
+        plt.imshow(img)
+        plt.axis("off")
+        plt.tight_layout()
+        plt.show()
+        plt.close()
+    except Exception as e:
+        logger.warning("Inline display failed: %s — artifact saved to disk", e)
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +140,7 @@ def _build_curve_dataframe(
 
     Why long format:
         plotnine maps aesthetics to columns. Long format lets us map
-        split to color with a single aes() call.
+        split to color with a single aes() call without duplicated geom layers.
     """
     epochs  = list(range(1, len(train_losses) + 1))
     records = []
@@ -149,7 +178,7 @@ def _ucb_theme() -> theme:
     )
 
 
-def _plotnine_to_array(p, width: int = 800, height: int = 500) -> np.ndarray:
+def _plotnine_to_array(p, width: int = 900, height: int = 550) -> np.ndarray:
     """
     Convert a plotnine plot to a numpy RGB array for embedding in matplotlib.
 
@@ -161,13 +190,13 @@ def _plotnine_to_array(p, width: int = 800, height: int = 500) -> np.ndarray:
     Returns:
         NumPy array of shape (height, width, 3) with RGB values.
 
-    Why use PIL and io.BytesIO instead of tostring_rgb:
+    Why PIL and io.BytesIO instead of tostring_rgb:
         tostring_rgb() was removed in matplotlib >= 3.8.
         Saving to a BytesIO buffer and reopening with PIL is the
         version-agnostic replacement that works across all environments.
     """
     buf = io.BytesIO()
-    p.save(buf, format="png", width=width/100, height=height/100, dpi=100, verbose=False)
+    p.save(buf, format="png", width=width/100, height=height/100, dpi=150, verbose=False)
     buf.seek(0)
     img = Image.open(buf).convert("RGB")
     return np.array(img)
@@ -184,7 +213,7 @@ def plot_training_narrative(
     val_accs     : list[float],
 ) -> Path:
     """
-    Generate a BI-grade training narrative plot.
+    Generate a BI-grade training narrative plot and display inline.
 
     Business question answered: "Is the model robust enough for production?"
 
@@ -192,6 +221,7 @@ def plot_training_narrative(
         - Optimal model point (min val_loss) marked with UCB Gold line.
         - Overfitting onset annotated with a warning label.
         - Production threshold reference line at 85% accuracy.
+        - Inline display in Colab/Jupyter after saving.
 
     Args:
         exp_id:       Experiment identifier used as filename prefix and title.
@@ -286,7 +316,7 @@ def plot_training_narrative(
     )
 
     # --- Render both panels using PIL buffer (matplotlib >= 3.8 compatible) ---
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 7))
     fig.patch.set_facecolor("white")
 
     for p, ax in [(p_loss, ax1), (p_acc, ax2)]:
@@ -300,6 +330,10 @@ def plot_training_narrative(
     plt.close()
 
     logger.info("Narrative plot saved -> %s", out_path)
+
+    # Display inline after saving — guaranteed artifact on disk first
+    _display_inline(out_path, figsize=(18, 7))
+
     return out_path
 
 
@@ -309,11 +343,14 @@ def plot_confusion_matrix_bi(
     class_names : list[str],
 ) -> Path:
     """
-    Generate a BI-grade confusion matrix with Top-3 business error table.
+    Generate a BI-grade confusion matrix with Top-3 business error table
+    and display inline in Colab/Jupyter.
 
     Storytelling elements:
         - Row-normalized heatmap in UCB Blue palette.
         - Top-3 most confused class pairs as an embedded executive alert table.
+        - High DPI rendering for legibility with 50 classes.
+        - Inline display after saving to Drive.
 
     Args:
         exp_id:       Experiment identifier.
@@ -323,9 +360,10 @@ def plot_confusion_matrix_bi(
     Returns:
         Path to the saved PNG artifact.
 
-    Why row normalization:
-        CM[i,j] / sum(CM[i,:]) shows what fraction of true class i was
-        predicted as class j. High diagonal = strong model.
+    Why high DPI and large figsize for 50 classes:
+        With 50 classes the heatmap has 2500 cells. At standard DPI
+        each cell is sub-pixel and unreadable. dpi=200 + figsize=28
+        guarantees legibility of both heatmap and embedded table.
     """
     EXPERIMENTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -333,6 +371,7 @@ def plot_confusion_matrix_bi(
     row_sums = cm.sum(axis=1, keepdims=True)
     cm_norm  = cm.astype(float) / (row_sums + 1e-8)
 
+    # Off-diagonal only: diagonal = correct predictions, not errors
     error_matrix = cm_norm.copy()
     np.fill_diagonal(error_matrix, 0)
 
@@ -347,10 +386,12 @@ def plot_confusion_matrix_bi(
     ]
     top3_df = pd.DataFrame(top3_errors)
 
-    fig_size = max(14, n // 2)
-    fig      = plt.figure(figsize=(fig_size + 4, fig_size * 0.9), facecolor="white")
-    ax_hm    = fig.add_axes([0.0,  0.15, 0.82, 0.80])
-    ax_table = fig.add_axes([0.84, 0.50, 0.15, 0.35])
+    # Why figsize 28: with 50 classes each cell needs ~0.5 inch to be readable
+    fig_w    = 28
+    fig_h    = 24
+    fig      = plt.figure(figsize=(fig_w, fig_h), facecolor="white")
+    ax_hm    = fig.add_axes([0.0,  0.12, 0.80, 0.84])
+    ax_table = fig.add_axes([0.82, 0.55, 0.17, 0.30])
 
     sns.heatmap(
         cm_norm,
@@ -359,26 +400,28 @@ def plot_confusion_matrix_bi(
         xticklabels = class_names,
         yticklabels = class_names,
         vmin=0, vmax=1,
-        annot       = (n <= 25),
-        fmt         = ".2f",
-        linewidths  = 0.3,
-        cbar_kws    = {"shrink": 0.6, "label": "Confusion Rate"},
+        annot       = False,   # too many cells for annotation — use color only
+        linewidths  = 0.2,
+        cbar_kws    = {"shrink": 0.5, "label": "Confusion Rate"},
     )
     ax_hm.set_title(
         exp_id + "\nConfusion Matrix — Row Normalized",
-        fontsize=12, fontweight="bold", color=UCB_BLUE, pad=12,
+        fontsize=14, fontweight="bold", color=UCB_BLUE, pad=14,
     )
-    ax_hm.set_xlabel("Predicted Label", fontsize=9, color=UCB_BLUE)
-    ax_hm.set_ylabel("True Label",      fontsize=9, color=UCB_BLUE)
+    ax_hm.set_xlabel("Predicted Label", fontsize=10, color=UCB_BLUE)
+    ax_hm.set_ylabel("True Label",      fontsize=10, color=UCB_BLUE)
+    ax_hm.set_xticklabels(
+        ax_hm.get_xticklabels(), rotation=45, ha="right", fontsize=7
+    )
+    ax_hm.set_yticklabels(
+        ax_hm.get_yticklabels(), rotation=0, fontsize=7
+    )
 
-    tick_size = max(5, 10 - n // 10)
-    ax_hm.set_xticklabels(ax_hm.get_xticklabels(), rotation=45, ha="right", fontsize=tick_size)
-    ax_hm.set_yticklabels(ax_hm.get_yticklabels(), rotation=0,  fontsize=tick_size)
-
+    # --- Executive alert table ---
     ax_table.axis("off")
     ax_table.set_title(
         "Top-3 Business Errors\n(Data Collection Targets)",
-        fontsize=8, fontweight="bold", color="#D32F2F", pad=6,
+        fontsize=10, fontweight="bold", color="#D32F2F", pad=8,
     )
     tbl = ax_table.table(
         cellText  = top3_df.values,
@@ -387,18 +430,22 @@ def plot_confusion_matrix_bi(
         loc       = "center",
     )
     tbl.auto_set_font_size(False)
-    tbl.set_fontsize(7)
-    tbl.scale(1, 1.6)
+    tbl.set_fontsize(9)
+    tbl.scale(1.2, 2.0)
 
     for col in range(len(top3_df.columns)):
         tbl[0, col].set_facecolor(UCB_DARK_GOLD)
         tbl[0, col].set_text_props(color="white", fontweight="bold")
 
     out_path = EXPERIMENTS_DIR / (exp_id + "_confusion_bi.png")
-    plt.savefig(out_path, dpi=150, bbox_inches="tight", facecolor="white")
+    plt.savefig(out_path, dpi=200, bbox_inches="tight", facecolor="white")
     plt.close()
 
     logger.info("BI confusion matrix saved -> %s", out_path)
+
+    # Display inline after saving — high resolution for legibility
+    _display_inline(out_path, figsize=(24, 20))
+
     return out_path
 
 
@@ -414,6 +461,9 @@ def generate_executive_report(
     """
     Generate an automatic executive Markdown report from training metrics.
 
+    All insights and recommendations are derived programmatically —
+    no manual input required.
+
     Args:
         exp_id:       Experiment identifier.
         train_losses: Per-epoch training loss.
@@ -427,9 +477,9 @@ def generate_executive_report(
         Path to the generated Markdown report.
 
     Why programmatic report generation:
-        Manual report writing introduces inconsistencies between
-        the written numbers and the actual metrics. Auto-generation
-        guarantees the report always reflects the real experiment results.
+        Manual report writing introduces inconsistencies between written
+        numbers and actual metrics. Auto-generation guarantees the report
+        always reflects the real experiment results.
     """
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
 

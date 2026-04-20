@@ -1,18 +1,19 @@
 ﻿# ============================================================
 # MODULE: evaluate.py
 # PURPOSE: Post-training evaluation — top-k accuracy, full
-#          classification report, and BI-grade confusion matrix.
-#          Decoupled from train.py to enable reuse in notebooks
-#          and inference workflows without re-running training.
+#          classification report, BI confusion matrix with
+#          inline display. Decoupled from train.py for reuse
+#          in notebooks and inference workflows.
 # NORMATIVE BASIS: UCB Project 5 rubric — Phase 3: compare
 #                  scratch vs transfer in table or chart.
 #                  Phase 4: analysis of strengths and weaknesses.
 # AUTHOR: Guillermo Carvajal Vaca — UCB MSc Data Science & AI
-# VERSION: 1.0.0
+# VERSION: 1.2.0
 # ============================================================
 from __future__ import annotations
 
 # --- stdlib (alphabetical) ---
+import importlib
 import logging
 from typing import Tuple
 
@@ -25,9 +26,22 @@ from torch.utils.data import DataLoader
 
 # --- local (alphabetical) ---
 from src.config import DEVICE
-from src.visualization import generate_executive_report, plot_confusion_matrix_bi
 
 logger = logging.getLogger(__name__)
+
+
+def _get_visualization():
+    """
+    Import and reload visualization module on every call.
+
+    Why reload on every call:
+        In Colab, after a git pull, Python keeps the old cached module
+        in memory. Reloading guarantees the latest version of
+        plot_confusion_matrix_bi is always used.
+    """
+    import src.visualization
+    importlib.reload(src.visualization)
+    return src.visualization
 
 
 def top_k_accuracy(
@@ -40,7 +54,7 @@ def top_k_accuracy(
     Compute top-1 and top-k accuracy over a DataLoader.
 
     Args:
-        model:  Trained model in eval mode.
+        model:  Trained model in eval mode, already on device.
         loader: DataLoader with shuffle=False for reproducible results.
         k:      Number of top predictions to consider for top-k metric.
         device: Target device for tensor operations.
@@ -50,9 +64,9 @@ def top_k_accuracy(
 
     Why top-k matters for 50-class classification:
         With 50 visually similar landmark classes, top-1 accuracy alone
-        can be misleadingly low. Top-5 accuracy reveals whether the model
-        has the correct class in its shortlist — critical for a production
-        recommendation system where showing 3-5 suggestions is acceptable.
+        can be misleadingly low. Top-5 reveals whether the model has the
+        correct class in its shortlist — critical for production systems
+        where showing 3-5 suggestions is acceptable UX.
     """
     model.eval()
     top1_correct = 0
@@ -65,15 +79,10 @@ def top_k_accuracy(
             labels = labels.to(device, non_blocking=True)
             logits = model(imgs)
 
-            # Top-1: single best prediction must match the true label
             top1_correct += (logits.argmax(dim=1) == labels).sum().item()
-
-            # Top-k: true label must appear among the k highest logits
-            # unsqueeze(1) broadcasts labels from [B] to [B,1] for comparison
-            topk_idx      = logits.topk(k, dim=1).indices   # [B, k]
+            topk_idx      = logits.topk(k, dim=1).indices
             topk_correct += (topk_idx == labels.unsqueeze(1)).any(dim=1).sum().item()
-
-            total += labels.size(0)
+            total        += labels.size(0)
 
     top1_acc = top1_correct / total
     topk_acc = topk_correct / total
@@ -94,27 +103,35 @@ def full_evaluation(
     Run complete post-training evaluation with all diagnostic artifacts.
 
     Computes top-1 accuracy, top-k accuracy, sklearn classification report,
-    and generates a BI-grade confusion matrix heatmap with business error table.
-    Also updates the executive report with the full confusion matrix.
+    and generates a BI-grade confusion matrix heatmap with business error
+    table. Displays all visuals inline in Colab/Jupyter.
 
     Args:
-        exp_id:       Experiment identifier — used as artifact filename prefix.
-        model:        Trained model. Will be set to eval mode internally.
+        exp_id:       Experiment identifier — artifact filename prefix.
+        model:        Trained model. Moved to device internally.
         loader:       Test DataLoader (shuffle=False).
-        class_names:  Ordered list of class labels matching ImageFolder order.
+        class_names:  Ordered list of class labels matching ImageFolder.
         device:       Target device for tensor operations.
         topk:         k for top-k accuracy metric.
 
     Returns:
-        Dict with keys:
-            top1_accuracy, top{k}_accuracy,
-            confusion_matrix_path, classification_report.
+        Dict with keys: top1_accuracy, top{k}_accuracy,
+        confusion_matrix_path, classification_report.
+
+    Why move model to device inside full_evaluation:
+        Callers may pass a model loaded from checkpoint on CPU.
+        Centralizing the .to(device) call here prevents the
+        'Input type and weight type should be the same' RuntimeError
+        that occurs when tensors are on GPU but model weights are on CPU.
 
     Why collect all predictions before computing metrics:
         sklearn metrics require the full prediction array, not per-batch
-        aggregates. Collecting in lists and converting once is more memory
-        efficient than concatenating tensors incrementally on GPU.
+        aggregates. Collecting in lists then converting once is more
+        memory efficient than concatenating tensors on GPU.
     """
+    # Why move to device here: prevents RuntimeError when model loaded from
+    # CPU checkpoint and DataLoader sends tensors to GPU.
+    model = model.to(device)
     model.eval()
 
     all_preds  : list[int] = []
@@ -141,26 +158,26 @@ def full_evaluation(
     top1_acc = float((all_preds_np == all_labels_np).mean())
     topk_acc = float(topk_correct / total)
 
-    # sklearn report: precision, recall, F1 per class + macro/weighted averages
     report = classification_report(
         all_labels_np,
         all_preds_np,
-        target_names = class_names,
-        zero_division = 0,   # suppress warnings for classes with no predictions
+        target_names  = class_names,
+        zero_division = 0,
     )
     print(f"\n--- {exp_id} — Classification Report ---")
     print(report)
     print(f"  Top-1 Accuracy  : {top1_acc:.4f}  ({top1_acc * 100:.2f}%)")
     print(f"  Top-{topk} Accuracy : {topk_acc:.4f}  ({topk_acc * 100:.2f}%)")
 
-    # Confusion matrix — raw counts for BI visualization
+    # --- BI confusion matrix with inline display ---
     cm      = confusion_matrix(all_labels_np, all_preds_np)
-    cm_path = plot_confusion_matrix_bi(exp_id, cm, class_names)
+    viz     = _get_visualization()
+    cm_path = viz.plot_confusion_matrix_bi(exp_id, cm, class_names)
 
-    # Update executive report with real confusion matrix data
-    generate_executive_report(
+    # --- Update executive report with real confusion matrix data ---
+    viz.generate_executive_report(
         exp_id       = exp_id,
-        train_losses = [],    # not available at evaluation time — pass empty
+        train_losses = [],
         val_losses   = [],
         val_accs     = [],
         class_names  = class_names,
@@ -174,8 +191,8 @@ def full_evaluation(
     )
 
     return {
-        "top1_accuracy"             : top1_acc,
-        f"top{topk}_accuracy"       : topk_acc,
-        "confusion_matrix_path"     : str(cm_path),
-        "classification_report"     : report,
+        "top1_accuracy"         : top1_acc,
+        f"top{topk}_accuracy"   : topk_acc,
+        "confusion_matrix_path" : str(cm_path),
+        "classification_report" : report,
     }
