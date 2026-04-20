@@ -8,7 +8,7 @@
 #                  inference app. All cells must be executed
 #                  before submission (rubric: -3 pts if not).
 # AUTHOR: Guillermo Carvajal Vaca — UCB MSc Data Science & AI
-# VERSION: 1.0.0
+# VERSION: 1.1.0
 # ============================================================
 from __future__ import annotations
 
@@ -26,6 +26,54 @@ logger = logging.getLogger(__name__)
 NOTEBOOKS_DIR = Path(__file__).resolve().parent.parent / "notebooks"
 NOTEBOOKS_DIR.mkdir(parents=True, exist_ok=True)
 
+# ---------------------------------------------------------------------------
+# SHARED CELL TEMPLATES
+# ---------------------------------------------------------------------------
+
+# Why a shared setup cell template:
+# All 4 notebooks need identical environment detection logic.
+# Centralizing it here ensures a single fix propagates to all notebooks.
+SETUP_CELL = (
+    "# ── Cell 0A: Mount Google Drive (Colab only) ───────────────\n"
+    "# Why: dataset lives in Google Drive. Must mount before any\n"
+    "# src.config import — TRAIN_DIR and TEST_DIR resolve to Drive paths.\n"
+    "# Skip this cell if running locally in PyCharm.\n"
+    "import os\n"
+    "if os.path.exists('/content'):\n"
+    "    from google.colab import drive\n"
+    "    drive.mount('/content/drive')\n"
+    "    import subprocess\n"
+    "    if not os.path.exists('/content/landmark-classifier'):\n"
+    "        subprocess.run(['git', 'clone',\n"
+    "            'https://github.com/guillermocarvajalvaca-dev/landmark-classifier.git',\n"
+    "            '/content/landmark-classifier'], check=True)\n"
+    "    import subprocess\n"
+    "    subprocess.run(['pip', 'install', '-q', 'plotnine'], check=True)\n"
+    "    print('Colab environment ready')\n"
+    "else:\n"
+    "    print('Local environment detected')\n"
+)
+
+CONFIG_CELL = (
+    "# ── Cell 1: Environment setup ──────────────────────────────\n"
+    "# Why first cell is always config: single source of truth for\n"
+    "# paths and hyperparameters. Any change propagates to all cells.\n"
+    "import logging\n"
+    "import os\n"
+    "import sys\n"
+    "from pathlib import Path\n\n"
+    "# Why explicit Colab path: Path('..').resolve() returns /content\n"
+    "# in Colab instead of the project root, breaking src.* imports.\n"
+    "PROJECT_ROOT = (\n"
+    "    Path('/content/landmark-classifier')\n"
+    "    if os.path.exists('/content/landmark-classifier/src')\n"
+    "    else Path('..').resolve()\n"
+    ")\n"
+    "if str(PROJECT_ROOT) not in sys.path:\n"
+    "    sys.path.insert(0, str(PROJECT_ROOT))\n\n"
+    "logging.basicConfig(level=logging.INFO)\n"
+)
+
 
 def _save_notebook(nb: nbformat.NotebookNode, filename: str) -> Path:
     """
@@ -38,7 +86,7 @@ def _save_notebook(nb: nbformat.NotebookNode, filename: str) -> Path:
     Returns:
         Path to the saved notebook.
 
-    Why nbformat.validate before saving:
+    Why validate before saving:
         An invalid .ipynb silently fails to open in Jupyter or Colab.
         Validating here catches structural errors before they become
         hard-to-debug runtime issues.
@@ -49,6 +97,15 @@ def _save_notebook(nb: nbformat.NotebookNode, filename: str) -> Path:
         nbformat.write(nb, fh)
     logger.info("Notebook saved -> %s", out_path)
     return out_path
+
+
+def _kernel_metadata() -> dict:
+    """Return standard kernel metadata for all notebooks."""
+    return {
+        "display_name": "Python (landmark-venv)",
+        "language": "python",
+        "name": "landmark-venv",
+    }
 
 
 # ===========================================================================
@@ -64,25 +121,15 @@ def create_01_exploration() -> Path:
             "> **Business question:** What does our dataset look like, and are our "
             "DataLoaders correctly configured before we invest GPU time in training?\n\n"
             "**Phase 1 rubric targets:**\n"
-            "- Visualize ≥5 sample images with labels (1 pt)\n"
+            "- Visualize >=5 sample images with labels (1 pt)\n"
             "- Class distribution bar chart (1 pt)\n"
             "- Functional train / val / test DataLoaders (1 pt)"
         ),
 
-        # ── Cell 1: Environment setup ────────────────────────────────────────
+        new_code_cell(SETUP_CELL),
+
         new_code_cell(
-            "# ── Cell 1: Environment setup ──────────────────────────────────\n"
-            "# Why first cell is always config: single source of truth for paths\n"
-            "# and hyperparameters. Any change here propagates to all cells below.\n"
-            "import logging\n"
-            "import sys\n"
-            "from pathlib import Path\n\n"
-            "# Add project root to sys.path so src.* imports resolve in both\n"
-            "# PyCharm (local) and Colab (after Drive mount)\n"
-            "PROJECT_ROOT = Path('..').resolve()\n"
-            "if str(PROJECT_ROOT) not in sys.path:\n"
-            "    sys.path.insert(0, str(PROJECT_ROOT))\n\n"
-            "logging.basicConfig(level=logging.INFO)\n\n"
+            CONFIG_CELL +
             "from src.config import (\n"
             "    DEVICE, EXPERIMENTS_DIR, NUM_CLASSES, SEED,\n"
             "    TEST_DIR, TRAIN_DIR,\n"
@@ -95,7 +142,6 @@ def create_01_exploration() -> Path:
             "print(f'Num classes : {NUM_CLASSES}')"
         ),
 
-        # ── Cell 2: Dataset structure audit ─────────────────────────────────
         new_markdown_cell(
             "## 1. Dataset Structure Audit\n\n"
             "Before loading anything into memory, we audit the raw folder structure.\n"
@@ -113,7 +159,6 @@ def create_01_exploration() -> Path:
             "print(f'Test  classes found : {len(test_classes)}')\n"
             "print(f'Classes match       : {train_classes == test_classes}')\n"
             "print(f'First 5 classes     : {train_classes[:5]}')\n\n"
-            "# Count images per class — reveals class imbalance before training\n"
             "train_counts = {\n"
             "    cls: len(list((TRAIN_DIR / cls).glob('*')))\n"
             "    for cls in train_classes\n"
@@ -123,58 +168,51 @@ def create_01_exploration() -> Path:
             "print(f'Avg per class       : {total_train / len(train_classes):.1f}')"
         ),
 
-        # ── Cell 3: BI class distribution plot ───────────────────────────────
         new_markdown_cell(
             "## 2. Class Distribution — BI Visualization\n\n"
             "**Storytelling question:** Is the dataset balanced across all 50 landmark classes?\n\n"
-            "Class imbalance forces the model to be biased toward majority classes.\n"
-            "If detected here, we address it via weighted sampling or loss weighting — "
-            "before wasting compute on a biased model."
+            "Class imbalance biases the model toward majority classes.\n"
+            "Detecting it here allows corrective action before wasting compute."
         ),
 
         new_code_cell(
             "# ── Cell 3: BI class distribution plot ─────────────────────────\n"
-            "# UCB palette applied — color encodes information (not decoration):\n"
-            "# UCB Gold = majority classes (potential bias source)\n"
-            "# UCB Blue = standard classes\n"
+            "# Why UCB palette with semantic color encoding:\n"
+            "# Gold = majority classes (>1.5x mean) — potential bias source.\n"
+            "# Color encodes information, not decoration.\n"
             "import matplotlib.pyplot as plt\n"
             "import numpy as np\n\n"
             "UCB_BLUE      = '#003262'\n"
             "UCB_GOLD      = '#FDB515'\n"
             "UCB_DARK_GOLD = '#C4820E'\n\n"
-            "names  = list(train_counts.keys())\n"
-            "counts = list(train_counts.values())\n"
-            "mean_count = np.mean(counts)\n\n"
-            "colors = [UCB_GOLD if c > mean_count * 1.5 else UCB_BLUE for c in counts]\n\n"
+            "names      = list(train_counts.keys())\n"
+            "counts     = list(train_counts.values())\n"
+            "mean_count = np.mean(counts)\n"
+            "colors     = [UCB_GOLD if c > mean_count * 1.5 else UCB_BLUE for c in counts]\n\n"
             "fig, ax = plt.subplots(figsize=(22, 5), facecolor='white')\n"
-            "bars = ax.bar(range(len(names)), counts, color=colors, edgecolor='white', linewidth=0.5)\n"
+            "ax.bar(range(len(names)), counts, color=colors, edgecolor='white', linewidth=0.5)\n"
             "ax.axhline(mean_count, color=UCB_DARK_GOLD, linestyle='--', linewidth=1.2,\n"
             "           label=f'Mean: {mean_count:.0f} images/class')\n"
             "ax.set_xticks(range(len(names)))\n"
-            "ax.set_xticklabels([n.replace('_', ' ') for n in names],\n"
-            "                   rotation=90, fontsize=6)\n"
+            "ax.set_xticklabels([n.replace('_', ' ') for n in names], rotation=90, fontsize=6)\n"
             "ax.set_title('Landmark Dataset — Class Distribution\\n'\n"
-            "             'Gold bars = majority classes (>1.5x mean) — potential bias source',\n"
+            "             'Gold = majority classes (>1.5x mean) — potential bias source',\n"
             "             fontsize=12, fontweight='bold', color=UCB_BLUE)\n"
             "ax.set_xlabel('Landmark Class', fontsize=9, color=UCB_BLUE)\n"
             "ax.set_ylabel('Number of Images', fontsize=9, color=UCB_BLUE)\n"
             "ax.legend(fontsize=9)\n"
             "ax.spines[['top', 'right']].set_visible(False)\n"
-            "plt.tight_layout()\n\n"
-            "out = EXPERIMENTS_DIR / 'class_distribution.png'\n"
+            "plt.tight_layout()\n"
             "EXPERIMENTS_DIR.mkdir(parents=True, exist_ok=True)\n"
+            "out = EXPERIMENTS_DIR / 'class_distribution.png'\n"
             "plt.savefig(out, dpi=150, bbox_inches='tight', facecolor='white')\n"
             "plt.show()\n"
             "print(f'Saved -> {out}')"
         ),
 
-        # ── Cell 4: Sample images visualization ──────────────────────────────
         new_markdown_cell(
             "## 3. Sample Images with Labels\n\n"
-            "Visual inspection of raw images confirms:\n"
-            "- Images load correctly from the dataset path\n"
-            "- Labels map to recognizable landmark names\n"
-            "- No obvious data corruption"
+            "Visual inspection confirms images load correctly and labels match landmarks."
         ),
 
         new_code_cell(
@@ -184,84 +222,69 @@ def create_01_exploration() -> Path:
             "# Human review catches mismatches that metrics cannot.\n"
             "import random\n"
             "from torchvision.datasets import ImageFolder\n\n"
-            "raw_ds = ImageFolder(str(TRAIN_DIR))\n"
+            "raw_ds     = ImageFolder(str(TRAIN_DIR))\n"
             "sample_idx = random.sample(range(len(raw_ds)), 8)\n\n"
             "fig, axes = plt.subplots(2, 4, figsize=(16, 7), facecolor='white')\n"
-            "axes = axes.flatten()\n\n"
-            "for ax, idx in zip(axes, sample_idx):\n"
+            "for ax, idx in zip(axes.flatten(), sample_idx):\n"
             "    img, label = raw_ds[idx]\n"
             "    ax.imshow(img)\n"
-            "    ax.set_title(\n"
-            "        raw_ds.classes[label].replace('_', ' '),\n"
-            "        fontsize=8, color=UCB_BLUE, fontweight='bold'\n"
-            "    )\n"
-            "    ax.axis('off')\n\n"
+            "    ax.set_title(raw_ds.classes[label].replace('_', ' '),\n"
+            "                 fontsize=8, color=UCB_BLUE, fontweight='bold')\n"
+            "    ax.axis('off')\n"
             "fig.suptitle('Sample Landmark Images with Ground Truth Labels',\n"
             "             fontsize=12, fontweight='bold', color=UCB_BLUE)\n"
-            "plt.tight_layout()\n\n"
+            "plt.tight_layout()\n"
             "out = EXPERIMENTS_DIR / 'sample_images.png'\n"
             "plt.savefig(out, dpi=150, bbox_inches='tight', facecolor='white')\n"
             "plt.show()\n"
             "print(f'Saved -> {out}')"
         ),
 
-        # ── Cell 5: DataLoaders ───────────────────────────────────────────────
         new_markdown_cell(
             "## 4. DataLoaders — Build and Verify\n\n"
-            "We build three DataLoaders:\n"
-            "- **Train**: shuffle=True + augmentation active\n"
-            "- **Val**: shuffle=False + no augmentation (reproducible metrics)\n"
-            "- **Test**: shuffle=False + no augmentation (held-out evaluation)"
+            "Three DataLoaders: train (shuffle + augmentation), "
+            "val (no shuffle, no augmentation), test (no shuffle, no augmentation)."
         ),
 
         new_code_cell(
             "# ── Cell 5: DataLoaders ─────────────────────────────────────────\n"
-            "# Why verify_dataloaders before any training:\n"
-            "# Shape mismatches and normalization errors are silent —\n"
-            "# the model trains but learns nothing useful.\n"
-            "# Catching them here costs seconds, not hours of GPU time.\n"
+            "# Why verify before training: shape mismatches and normalization\n"
+            "# errors are silent — the model trains but learns nothing useful.\n"
             "from src.data import get_dataloaders, verify_dataloaders\n\n"
             "train_loader, val_loader, test_loader, class_names = get_dataloaders()\n"
             "verify_dataloaders(train_loader, val_loader, test_loader, class_names)"
         ),
 
-        # ── Cell 6: Augmentation preview ─────────────────────────────────────
         new_markdown_cell(
             "## 5. Augmentation Preview\n\n"
-            "Showing the same image before and after augmentation confirms:\n"
-            "- Augmentation is active on training samples\n"
-            "- Transforms are reasonable (not destroying landmark structure)\n"
-            "- Normalization shifts pixel values to the expected ImageNet range"
+            "Same image before and after augmentation confirms transforms are active "
+            "and reasonable — not destroying landmark structure."
         ),
 
         new_code_cell(
             "# ── Cell 6: Augmentation preview ───────────────────────────────\n"
-            "# Why show augmented vs original side by side:\n"
-            "# Augmentation that is too aggressive (e.g. extreme rotation on\n"
-            "# symmetric landmarks) can confuse the model more than help it.\n"
-            "# Visual confirmation prevents silent accuracy degradation.\n"
-            "from src.data import get_transforms\n"
+            "# Why show augmented vs original: augmentation that is too aggressive\n"
+            "# confuses the model more than it helps. Visual check prevents\n"
+            "# silent accuracy degradation from bad transform choices.\n"
+            "import torch\n"
             "from PIL import Image\n"
-            "import torch\n\n"
-            "# Load one raw image for comparison\n"
+            "from src.data import get_transforms\n\n"
             "sample_class = class_names[0]\n"
             "sample_path  = next((TRAIN_DIR / sample_class).glob('*'))\n"
             "raw_img      = Image.open(sample_path).convert('RGB')\n\n"
-            "transform_plain = get_transforms(augment=False)\n"
-            "transform_aug   = get_transforms(augment=True)\n\n"
+            "transform_aug = get_transforms(augment=True)\n\n"
             "fig, axes = plt.subplots(1, 4, figsize=(16, 4), facecolor='white')\n"
             "axes[0].imshow(raw_img)\n"
-            "axes[0].set_title('Original', color=UCB_BLUE, fontweight='bold')\n\n"
+            "axes[0].set_title('Original', color=UCB_BLUE, fontweight='bold')\n"
             "for i, ax in enumerate(axes[1:], 1):\n"
             "    aug_tensor = transform_aug(raw_img)\n"
-            "    # Denormalize for display: reverse ImageNet normalization\n"
             "    mean = torch.tensor([0.485, 0.456, 0.406]).view(3,1,1)\n"
             "    std  = torch.tensor([0.229, 0.224, 0.225]).view(3,1,1)\n"
-            "    img_display = (aug_tensor * std + mean).clamp(0, 1).permute(1, 2, 0).numpy()\n"
+            "    img_display = (aug_tensor * std + mean).clamp(0,1).permute(1,2,0).numpy()\n"
             "    ax.imshow(img_display)\n"
-            "    ax.set_title(f'Augmented #{i}', color=UCB_DARK_GOLD, fontweight='bold')\n\n"
+            "    ax.set_title(f'Augmented #{i}', color=UCB_DARK_GOLD, fontweight='bold')\n"
             "for ax in axes:\n"
-            "    ax.axis('off')\n\n"
+            "    ax.axis('off')\n"
             "fig.suptitle(f'Augmentation Preview — {sample_class.replace(\"_\", \" \")}',\n"
             "             fontsize=11, fontweight='bold', color=UCB_BLUE)\n"
             "plt.tight_layout()\n"
@@ -271,27 +294,22 @@ def create_01_exploration() -> Path:
             "print(f'Saved -> {out}')"
         ),
 
-        # ── Cell 7: Phase 1 summary ───────────────────────────────────────────
         new_markdown_cell(
-            "## Phase 1 — Summary and Checklist\n\n"
+            "## Phase 1 — Checklist\n\n"
             "| Check | Status |\n"
             "|---|---|\n"
             "| 50 classes detected | ✅ |\n"
             "| Class distribution plotted | ✅ |\n"
-            "| ≥5 sample images displayed | ✅ |\n"
+            "| >=5 sample images displayed | ✅ |\n"
             "| DataLoaders: batch shape [B, 3, 224, 224] | ✅ |\n"
             "| Augmentation preview confirmed | ✅ |\n"
             "| All artifacts saved to experiments/ | ✅ |\n\n"
-            "**Next step:** `02_cnn_from_scratch.ipynb` — Phase 2 training on Colab T4."
+            "**Next step:** `02_cnn_from_scratch.ipynb` — Phase 2 on Colab T4."
         ),
     ]
 
     nb = new_notebook(cells=cells)
-    nb.metadata["kernelspec"] = {
-        "display_name": "Python (landmark-venv)",
-        "language": "python",
-        "name": "landmark-venv",
-    }
+    nb.metadata["kernelspec"] = _kernel_metadata()
     return _save_notebook(nb, "01_exploration.ipynb")
 
 
@@ -306,27 +324,18 @@ def create_02_cnn_scratch() -> Path:
             "# Notebook 02 — CNN From Scratch\n"
             "## Landmark Classification CNN · UCB MSc Data Science & AI\n\n"
             "> **Business question:** Can a custom CNN trained from zero reach "
-            "≥40% test accuracy on 50 landmark classes?\n\n"
+            ">=40% test accuracy on 50 landmark classes?\n\n"
             "**Phase 2 rubric targets:**\n"
-            "- Custom CNN with ≥3 conv layers, pooling, dropout, FC (2 pts)\n"
-            "- Training ≥30 epochs with loss/accuracy curves (1 pt)\n"
-            "- Test accuracy ≥40% + TorchScript export (2 pts)\n\n"
-            "> ⚠️ **Run this notebook on Google Colab T4 GPU.**\n"
-            "> Training 30 epochs on 224×224 images takes ~8h on CPU, ~30 min on T4."
+            "- Custom CNN with >=3 conv layers, pooling, dropout, FC (2 pts)\n"
+            "- Training >=30 epochs with loss/accuracy curves (1 pt)\n"
+            "- Test accuracy >=40% + TorchScript export (2 pts)\n\n"
+            "> Run this notebook on Google Colab T4 GPU."
         ),
 
-        # ── Cell 1: Environment setup ────────────────────────────────────────
+        new_code_cell(SETUP_CELL),
+
         new_code_cell(
-            "# ── Cell 1: Environment setup ──────────────────────────────────\n"
-            "# Colab: run drive.mount('/content/drive') before this cell\n"
-            "# Local: PROJECT_ROOT auto-detected from __file__\n"
-            "import logging\n"
-            "import sys\n"
-            "from pathlib import Path\n\n"
-            "PROJECT_ROOT = Path('..').resolve()\n"
-            "if str(PROJECT_ROOT) not in sys.path:\n"
-            "    sys.path.insert(0, str(PROJECT_ROOT))\n\n"
-            "logging.basicConfig(level=logging.INFO)\n\n"
+            CONFIG_CELL +
             "from src.config import (\n"
             "    DEVICE, SCRATCH_EPOCHS, SCRATCH_LR,\n"
             "    SCRATCH_SCHEDULER_GAMMA, SCRATCH_SCHEDULER_STEP, SEED,\n"
@@ -338,61 +347,53 @@ def create_02_cnn_scratch() -> Path:
             "print(f'LR      : {SCRATCH_LR}')"
         ),
 
-        # ── Cell 2: DataLoaders ───────────────────────────────────────────────
         new_code_cell(
             "# ── Cell 2: DataLoaders ─────────────────────────────────────────\n"
-            "# Re-build DataLoaders here — notebooks are stateless across sessions.\n"
-            "# Colab disconnects lose all in-memory objects; rebuilding is fast.\n"
+            "# Why rebuild DataLoaders here: Colab disconnects lose all in-memory\n"
+            "# objects. Rebuilding is fast and guarantees a clean state.\n"
             "from src.data import get_dataloaders, verify_dataloaders\n\n"
             "train_loader, val_loader, test_loader, class_names = get_dataloaders()\n"
             "verify_dataloaders(train_loader, val_loader, test_loader, class_names)"
         ),
 
-        # ── Cell 3: Architecture inspection ──────────────────────────────────
         new_markdown_cell(
             "## 1. Architecture Design — CNNScratch\n\n"
-            "**Why this architecture:**\n"
-            "- Progressive filter growth (32→512) mirrors biological visual hierarchy\n"
-            "- BatchNorm stabilizes training — allows higher LR without explosion\n"
-            "- GlobalAveragePooling replaces Flatten — 25× fewer FC parameters\n"
-            "- Dropout2d regularizes spatial features — more effective than scalar Dropout"
+            "Progressive filter growth (32->512) mirrors biological visual hierarchy.\n"
+            "BatchNorm stabilizes training. GlobalAveragePooling reduces FC parameters by 25x."
         ),
 
         new_code_cell(
-            "# ── Cell 3: Architecture inspection ────────────────────────────\n"
-            "# Sanity check: if this cell fails, there is a bug in model.py.\n"
-            "# Run before any training — costs milliseconds, saves hours.\n"
+            "# ── Cell 3: Architecture sanity check ──────────────────────────\n"
+            "# Why run before training: if output shape mismatches num_classes,\n"
+            "# CrossEntropyLoss raises a cryptic CUDA error mid-epoch.\n"
+            "# Catching it here costs milliseconds, saves hours.\n"
             "import torch\n"
             "from src.model import CNNScratch, count_params\n\n"
             "model = CNNScratch(num_classes=len(class_names))\n"
-            "count_params(model)\n\n"
+            "count_params(model)\n"
             "dummy  = torch.zeros(2, 3, 224, 224)\n"
             "output = model(dummy)\n"
             "print(f'Output shape: {output.shape}  -> expected [2, {len(class_names)}]')\n"
             "assert output.shape == (2, len(class_names)), 'Shape mismatch — check model.py'"
         ),
 
-        # ── Cell 4: Experiment E1 ─────────────────────────────────────────────
         new_markdown_cell(
-            "## 2. Experiment E1 — Baseline (no augmentation)\n\n"
-            "**Hypothesis:** A 5-conv CNN without augmentation will overfit quickly.\n"
-            "**Purpose:** Establish the baseline to compare augmentation's impact in E2."
+            "## 2. Experiment E1 — Baseline\n\n"
+            "**Hypothesis:** Baseline CNN without augmentation will overfit quickly.\n"
+            "**Purpose:** Reference point to measure augmentation impact in E2."
         ),
 
         new_code_cell(
             "# ── Cell 4: Experiment E1 — baseline ───────────────────────────\n"
             "# Ablation rule: ONE factor changed per experiment.\n"
-            "# E1 = no augmentation. All other params fixed at config defaults.\n"
-            "from src.data import get_dataloaders\n"
+            "# E1 = no augmentation. All other params at config defaults.\n"
             "from src.model import CNNScratch\n"
             "from src.train import run_experiment\n\n"
-            "# DataLoader without augmentation for E1 baseline\n"
-            "train_loader_plain, _, _, _ = get_dataloaders()\n\n"
-            "model_e1 = CNNScratch(num_classes=len(class_names))\n\n"
+            "model_e1 = CNNScratch(num_classes=len(class_names))\n"
             "metrics_e1 = run_experiment(\n"
             "    exp_id       = 'E1_scratch_baseline',\n"
             "    model        = model_e1,\n"
-            "    train_loader = train_loader_plain,\n"
+            "    train_loader = train_loader,\n"
             "    val_loader   = val_loader,\n"
             "    test_loader  = test_loader,\n"
             "    class_names  = class_names,\n"
@@ -403,24 +404,23 @@ def create_02_cnn_scratch() -> Path:
             "print(f'E1 Test Accuracy: {metrics_e1[\"results\"][\"test_accuracy\"]*100:.2f}%')"
         ),
 
-        # ── Cell 5: Experiment E2 ─────────────────────────────────────────────
         new_markdown_cell(
-            "## 3. Experiment E2 — With Data Augmentation\n\n"
-            "**Hypothesis:** Adding augmentation reduces overfitting and improves val accuracy.\n"
+            "## 3. Experiment E2 — With Augmentation\n\n"
+            "**Hypothesis:** Augmentation reduces overfitting and improves val accuracy.\n"
             "**Single factor changed from E1:** augmentation ON."
         ),
 
         new_code_cell(
             "# ── Cell 5: Experiment E2 — augmentation ───────────────────────\n"
-            "# Only change from E1: train_loader now uses augment=True (default).\n"
+            "# Only change from E1: train_loader uses augment=True (default).\n"
             "# Same architecture, same LR, same epochs — isolates augmentation effect.\n"
             "from src.model import CNNScratch\n"
             "from src.train import run_experiment\n\n"
-            "model_e2 = CNNScratch(num_classes=len(class_names))\n\n"
+            "model_e2 = CNNScratch(num_classes=len(class_names))\n"
             "metrics_e2 = run_experiment(\n"
             "    exp_id       = 'E2_scratch_augmented',\n"
             "    model        = model_e2,\n"
-            "    train_loader = train_loader,   # augmentation active (default)\n"
+            "    train_loader = train_loader,\n"
             "    val_loader   = val_loader,\n"
             "    test_loader  = test_loader,\n"
             "    class_names  = class_names,\n"
@@ -431,20 +431,19 @@ def create_02_cnn_scratch() -> Path:
             "print(f'E2 Test Accuracy: {metrics_e2[\"results\"][\"test_accuracy\"]*100:.2f}%')"
         ),
 
-        # ── Cell 6: Experiment E3 ─────────────────────────────────────────────
         new_markdown_cell(
-            "## 4. Experiment E3 — Lower LR + Augmentation\n\n"
-            "**Hypothesis:** A lower LR with augmentation allows more stable convergence.\n"
-            "**Single factor changed from E2:** lr 1e-3 → 1e-4."
+            "## 4. Experiment E3 — Lower LR\n\n"
+            "**Hypothesis:** Lower LR with augmentation allows more stable convergence.\n"
+            "**Single factor changed from E2:** lr 1e-3 -> 1e-4."
         ),
 
         new_code_cell(
             "# ── Cell 6: Experiment E3 — lower LR ───────────────────────────\n"
             "# Lower LR is the standard next step when E2 shows unstable val_loss.\n"
-            "# If E2 val_loss curve is smooth, E3 may not add value — check curves first.\n"
+            "# If E2 val_loss curve is smooth, E3 may not add value.\n"
             "from src.model import CNNScratch\n"
             "from src.train import run_experiment\n\n"
-            "model_e3 = CNNScratch(num_classes=len(class_names))\n\n"
+            "model_e3 = CNNScratch(num_classes=len(class_names))\n"
             "metrics_e3 = run_experiment(\n"
             "    exp_id       = 'E3_scratch_lower_lr',\n"
             "    model        = model_e3,\n"
@@ -453,64 +452,46 @@ def create_02_cnn_scratch() -> Path:
             "    test_loader  = test_loader,\n"
             "    class_names  = class_names,\n"
             "    epochs       = SCRATCH_EPOCHS,\n"
-            "    lr           = 1e-4,   # single factor change from E2\n"
+            "    lr           = 1e-4,\n"
             "    extra_params = {'architecture': 'CNNScratch_5conv_BN', 'augmentation': True, 'lr_reason': 'stable convergence'},\n"
             ")\n"
             "print(f'E3 Test Accuracy: {metrics_e3[\"results\"][\"test_accuracy\"]*100:.2f}%')"
         ),
 
-        # ── Cell 7: Comparative table ─────────────────────────────────────────
-        new_markdown_cell(
-            "## 5. Phase 2 — Comparative Results Table\n\n"
-            "Summary of all scratch experiments with the single factor that changed."
-        ),
-
         new_code_cell(
-            "# ── Cell 7: Comparative table ──────────────────────────────────\n"
-            "# Why a table and not just reading JSON files:\n"
-            "# Side-by-side comparison makes the impact of each factor immediately\n"
-            "# visible — no mental arithmetic required to compare experiments.\n"
+            "# ── Cell 7: Comparative table Phase 2 ──────────────────────────\n"
+            "# Why a table: side-by-side comparison makes the impact of each\n"
+            "# factor immediately visible without mental arithmetic.\n"
             "import pandas as pd\n\n"
             "results = pd.DataFrame([\n"
             "    {\n"
-            "        'Experiment'   : m['exp_id'],\n"
-            "        'Factor Changed': m['hyperparameters'].get('lr_reason', 'augmentation' if m['hyperparameters'].get('augmentation') else 'baseline'),\n"
-            "        'LR'           : m['hyperparameters']['lr'],\n"
-            "        'Val Acc'      : f\"{m['results']['best_val_loss']:.4f}\",\n"
-            "        'Test Acc'     : f\"{m['results']['test_accuracy']*100:.2f}%\",\n"
-            "        'Time (min)'   : m['results']['total_time_min'],\n"
-            "        'Meets >=40%'  : '✅' if m['results']['test_accuracy'] >= 0.40 else '❌',\n"
+            "        'Experiment' : m['exp_id'],\n"
+            "        'LR'         : m['hyperparameters']['lr'],\n"
+            "        'Test Acc'   : f\"{m['results']['test_accuracy']*100:.2f}%\",\n"
+            "        'Time (min)' : m['results']['total_time_min'],\n"
+            "        'Meets >=40%': '✅' if m['results']['test_accuracy'] >= 0.40 else '❌',\n"
             "    }\n"
             "    for m in [metrics_e1, metrics_e2, metrics_e3]\n"
             "])\n"
             "print(results.to_string(index=False))"
         ),
 
-        # ── Cell 8: Full evaluation best model ───────────────────────────────
-        new_markdown_cell(
-            "## 6. Full Evaluation — Best Scratch Model\n\n"
-            "Run `full_evaluation` on the best experiment to generate:\n"
-            "- Classification report (precision, recall, F1 per class)\n"
-            "- BI confusion matrix with Top-3 business error table\n"
-            "- Executive report in docs/"
-        ),
-
         new_code_cell(
-            "# ── Cell 8: Full evaluation best model ─────────────────────────\n"
-            "# Identify best experiment by test accuracy, then run full evaluation.\n"
-            "# full_evaluation generates the BI confusion matrix and executive report.\n"
+            "# ── Cell 8: Full evaluation best scratch model ──────────────────\n"
+            "# full_evaluation generates BI confusion matrix + executive report.\n"
+            "# Why run on best model only: confusion matrix on a weak model\n"
+            "# produces noise, not actionable insight.\n"
             "import torch\n"
-            "from src.model import CNNScratch\n"
+            "from src.config import MODELS_DIR\n"
             "from src.evaluate import full_evaluation\n"
-            "from src.config import MODELS_DIR\n\n"
-            "all_metrics = [metrics_e1, metrics_e2, metrics_e3]\n"
-            "best = max(all_metrics, key=lambda m: m['results']['test_accuracy'])\n"
-            "print(f'Best experiment: {best[\"exp_id\"]} — {best[\"results\"][\"test_accuracy\"]*100:.2f}%')\n\n"
-            "# Reload best checkpoint\n"
+            "from src.model import CNNScratch\n\n"
+            "best = max([metrics_e1, metrics_e2, metrics_e3],\n"
+            "           key=lambda m: m['results']['test_accuracy'])\n"
+            "print(f'Best: {best[\"exp_id\"]} — {best[\"results\"][\"test_accuracy\"]*100:.2f}%')\n\n"
             "best_model = CNNScratch(num_classes=len(class_names))\n"
             "best_model.load_state_dict(\n"
             "    torch.load(MODELS_DIR / f'{best[\"exp_id\"]}_best.pt', weights_only=True)\n"
-            ")\n\n"
+            ")\n"
             "eval_results = full_evaluation(\n"
             "    exp_id      = best['exp_id'],\n"
             "    model       = best_model,\n"
@@ -524,23 +505,18 @@ def create_02_cnn_scratch() -> Path:
             "## Phase 2 — Checklist\n\n"
             "| Check | Status |\n"
             "|---|---|\n"
-            "| CNNScratch ≥3 conv layers | ✅ (5 conv blocks) |\n"
-            "| Trained ≥30 epochs | ✅ |\n"
-            "| BI narrative curves (loss + accuracy) | ✅ |\n"
+            "| CNNScratch >=3 conv layers | ✅ (5 conv blocks) |\n"
+            "| Trained >=30 epochs | ✅ |\n"
+            "| BI narrative curves | ✅ |\n"
             "| TorchScript exported | ✅ |\n"
             "| BI confusion matrix + Top-3 business errors | ✅ |\n"
-            "| Executive report generated | ✅ |\n"
-            "| Test accuracy ≥40% | ⬜ (fill after run) |\n\n"
-            "**Next step:** `03_transfer_learning.ipynb` — Phase 3 on Colab T4."
+            "| Test accuracy >=40% | ⬜ fill after run |\n\n"
+            "**Next step:** `03_transfer_learning.ipynb`"
         ),
     ]
 
     nb = new_notebook(cells=cells)
-    nb.metadata["kernelspec"] = {
-        "display_name": "Python (landmark-venv)",
-        "language": "python",
-        "name": "landmark-venv",
-    }
+    nb.metadata["kernelspec"] = _kernel_metadata()
     return _save_notebook(nb, "02_cnn_from_scratch.ipynb")
 
 
@@ -555,25 +531,19 @@ def create_03_transfer_learning() -> Path:
             "# Notebook 03 — Transfer Learning\n"
             "## Landmark Classification CNN · UCB MSc Data Science & AI\n\n"
             "> **Business question:** Does a pretrained ResNet18 backbone reach "
-            "≥70% test accuracy on 50 landmark classes — and when does fine-tuning "
-            "outperform feature extraction?\n\n"
+            ">=70% test accuracy on 50 landmark classes?\n\n"
             "**Phase 3 rubric targets:**\n"
             "- Pretrained model selection with written justification (2 pts)\n"
             "- Training curves + comparison with Phase 2 (1 pt)\n"
-            "- Test accuracy ≥70% + TorchScript export (2 pts)\n"
+            "- Test accuracy >=70% + TorchScript export (2 pts)\n"
             "- Written analysis of strengths and weaknesses (2 pts)\n\n"
-            "> ⚠️ **Run this notebook on Google Colab T4 GPU.**"
+            "> Run this notebook on Google Colab T4 GPU."
         ),
 
+        new_code_cell(SETUP_CELL),
+
         new_code_cell(
-            "# ── Cell 1: Environment setup ──────────────────────────────────\n"
-            "import logging\n"
-            "import sys\n"
-            "from pathlib import Path\n\n"
-            "PROJECT_ROOT = Path('..').resolve()\n"
-            "if str(PROJECT_ROOT) not in sys.path:\n"
-            "    sys.path.insert(0, str(PROJECT_ROOT))\n\n"
-            "logging.basicConfig(level=logging.INFO)\n\n"
+            CONFIG_CELL +
             "from src.config import (\n"
             "    DEVICE, SEED,\n"
             "    TL_EPOCHS_FINETUNE, TL_EPOCHS_FROZEN,\n"
@@ -598,46 +568,34 @@ def create_03_transfer_learning() -> Path:
         new_markdown_cell(
             "## 1. Model Selection — Written Justification\n\n"
             "**Why ResNet18 over VGG16:**\n"
-            "- VGG16: 138M parameters, FC layers alone exhaust 6 GB VRAM at batch_size=32\n"
-            "- ResNet18: 11M parameters, residual connections prevent vanishing gradient\n"
-            "- Residual connections make fine-tuning stable — VGG16 deep fine-tuning diverges\n"
-            "- Benchmark from Project 2 (Vegetables): ResNet18 matched VGG16 accuracy at 12× less compute\n\n"
+            "- VGG16: 138M parameters — FC layers alone exhaust 6 GB VRAM at batch_size=32\n"
+            "- ResNet18: 11M parameters — residual connections prevent vanishing gradient\n"
+            "- Fine-tuning ResNet18 is stable; VGG16 deep fine-tuning diverges\n\n"
             "**Why ResNet50 as second candidate:**\n"
             "- 25M parameters — more capacity for complex landmark features\n"
-            "- Useful when ResNet18 plateaus below 70% — provides a compute/accuracy trade-off reference"
+            "- Tests whether larger backbone justifies added compute cost"
         ),
 
         new_code_cell(
             "# ── Cell 3: Inspect trainable parameters per strategy ───────────\n"
-            "# Why check params before training:\n"
-            "# Confirms freeze/unfreeze worked as intended.\n"
-            "# Frozen ResNet18 should show ~144K trainable (FC only).\n"
-            "# Finetune should show ~8.5M (layer4 + FC).\n"
-            "from src.model import get_transfer_model, count_params\n\n"
-            "print('--- ResNet18 frozen (feature extraction) ---')\n"
-            "m_frozen = get_transfer_model('resnet18', num_classes=len(class_names), strategy='frozen')\n"
-            "count_params(m_frozen)\n\n"
+            "# Why check before training: confirms freeze/unfreeze worked.\n"
+            "# Frozen ResNet18: ~144K trainable (FC only).\n"
+            "# Finetune: ~8.5M trainable (layer4 + FC).\n"
+            "from src.model import count_params, get_transfer_model\n\n"
+            "print('--- ResNet18 frozen ---')\n"
+            "count_params(get_transfer_model('resnet18', strategy='frozen'))\n"
             "print()\n"
-            "print('--- ResNet18 finetune (layer4 + FC) ---')\n"
-            "m_finetune = get_transfer_model('resnet18', num_classes=len(class_names), strategy='finetune')\n"
-            "count_params(m_finetune)"
-        ),
-
-        new_markdown_cell(
-            "## 2. Experiment E4 — ResNet18 Feature Extraction\n\n"
-            "**Hypothesis:** Frozen ImageNet features already capture enough visual "
-            "structure to classify landmarks above 55% accuracy.\n"
-            "**Strategy:** Train only the new FC head — backbone weights unchanged."
+            "print('--- ResNet18 finetune ---')\n"
+            "count_params(get_transfer_model('resnet18', strategy='finetune'))"
         ),
 
         new_code_cell(
             "# ── Cell 4: Experiment E4 — ResNet18 frozen ────────────────────\n"
-            "# Feature extraction stage: only the FC head is trainable.\n"
+            "# Feature extraction: only FC head trainable.\n"
             "# Why start frozen: fast convergence, zero catastrophic forgetting risk.\n"
-            "# If this alone reaches >=70%, fine-tuning is unnecessary.\n"
             "from src.model import get_transfer_model\n"
             "from src.train import run_experiment\n\n"
-            "model_e4 = get_transfer_model('resnet18', num_classes=len(class_names), strategy='frozen')\n\n"
+            "model_e4 = get_transfer_model('resnet18', num_classes=len(class_names), strategy='frozen')\n"
             "metrics_e4 = run_experiment(\n"
             "    exp_id       = 'E4_resnet18_frozen',\n"
             "    model        = model_e4,\n"
@@ -652,21 +610,13 @@ def create_03_transfer_learning() -> Path:
             "print(f'E4 Test Accuracy: {metrics_e4[\"results\"][\"test_accuracy\"]*100:.2f}%')"
         ),
 
-        new_markdown_cell(
-            "## 3. Experiment E5 — ResNet18 Fine-tune (layer4 unfrozen)\n\n"
-            "**Hypothesis:** Adapting layer4 (highest-level ImageNet features) "
-            "to the landmark domain pushes accuracy above 70%.\n"
-            "**Single factor changed from E4:** strategy='finetune' + differentiated LR."
-        ),
-
         new_code_cell(
             "# ── Cell 5: Experiment E5 — ResNet18 finetune ──────────────────\n"
-            "# Fine-tuning stage: layer4 + FC trainable with differentiated LR.\n"
-            "# lr_backbone = 1e-5 (100x lower than head) prevents catastrophic\n"
-            "# forgetting while allowing domain adaptation of high-level features.\n"
+            "# Why lr_backbone 100x lower: prevents catastrophic forgetting\n"
+            "# while allowing domain adaptation of high-level features.\n"
             "from src.model import get_transfer_model\n"
             "from src.train import run_experiment\n\n"
-            "model_e5 = get_transfer_model('resnet18', num_classes=len(class_names), strategy='finetune')\n\n"
+            "model_e5 = get_transfer_model('resnet18', num_classes=len(class_names), strategy='finetune')\n"
             "metrics_e5 = run_experiment(\n"
             "    exp_id       = 'E5_resnet18_finetune_layer4',\n"
             "    model        = model_e5,\n"
@@ -682,21 +632,13 @@ def create_03_transfer_learning() -> Path:
             "print(f'E5 Test Accuracy: {metrics_e5[\"results\"][\"test_accuracy\"]*100:.2f}%')"
         ),
 
-        new_markdown_cell(
-            "## 4. Experiment E6 — ResNet50 Feature Extraction\n\n"
-            "**Hypothesis:** A larger backbone provides higher capacity for distinguishing "
-            "visually similar landmarks.\n"
-            "**Single factor changed from E4:** backbone ResNet18 → ResNet50."
-        ),
-
         new_code_cell(
             "# ── Cell 6: Experiment E6 — ResNet50 frozen ────────────────────\n"
-            "# ResNet50 has 25M params vs ResNet18's 11M.\n"
-            "# If E5 already reaches >=70%, E6 tests whether more capacity helps\n"
-            "# or simply adds compute cost without accuracy gain.\n"
+            "# Tests whether larger backbone capacity justifies extra compute.\n"
+            "# Single factor changed from E4: backbone resnet18 -> resnet50.\n"
             "from src.model import get_transfer_model\n"
             "from src.train import run_experiment\n\n"
-            "model_e6 = get_transfer_model('resnet50', num_classes=len(class_names), strategy='frozen')\n\n"
+            "model_e6 = get_transfer_model('resnet50', num_classes=len(class_names), strategy='frozen')\n"
             "metrics_e6 = run_experiment(\n"
             "    exp_id       = 'E6_resnet50_frozen',\n"
             "    model        = model_e6,\n"
@@ -711,15 +653,9 @@ def create_03_transfer_learning() -> Path:
             "print(f'E6 Test Accuracy: {metrics_e6[\"results\"][\"test_accuracy\"]*100:.2f}%')"
         ),
 
-        new_markdown_cell(
-            "## 5. Full Comparative Table — Scratch vs Transfer Learning\n\n"
-            "**Rubric requirement:** Compare all models in a table or chart."
-        ),
-
         new_code_cell(
-            "# ── Cell 7: Full comparative table ─────────────────────────────\n"
-            "# Load E3 scratch metrics from JSON to include in comparison.\n"
-            "# Why reload from JSON: notebooks are stateless — E3 was run in notebook 02.\n"
+            "# ── Cell 7: Full comparative table Scratch vs Transfer ──────────\n"
+            "# Why reload E3 from JSON: notebooks are stateless across sessions.\n"
             "import json\n"
             "import pandas as pd\n"
             "from src.config import EXPERIMENTS_DIR\n\n"
@@ -727,17 +663,14 @@ def create_03_transfer_learning() -> Path:
             "    path = EXPERIMENTS_DIR / f'{exp_id}_metrics.json'\n"
             "    with path.open() as f:\n"
             "        return json.load(f)\n\n"
-            "# Load best scratch result\n"
             "metrics_e3 = load_metrics('E3_scratch_lower_lr')\n\n"
             "all_results = pd.DataFrame([\n"
             "    {\n"
-            "        'Model'       : m['exp_id'],\n"
-            "        'Type'        : 'Scratch' if 'scratch' in m['exp_id'] else 'Transfer',\n"
-            "        'Backbone'    : m['hyperparameters'].get('backbone', 'Custom CNN'),\n"
-            "        'Strategy'    : m['hyperparameters'].get('strategy', 'from_scratch'),\n"
-            "        'Test Acc'    : f\"{m['results']['test_accuracy']*100:.2f}%\",\n"
-            "        'Time (min)'  : m['results']['total_time_min'],\n"
-            "        'Meets target': '✅' if (\n"
+            "        'Model'        : m['exp_id'],\n"
+            "        'Type'         : 'Scratch' if 'scratch' in m['exp_id'] else 'Transfer',\n"
+            "        'Test Acc'     : f\"{m['results']['test_accuracy']*100:.2f}%\",\n"
+            "        'Time (min)'   : m['results']['total_time_min'],\n"
+            "        'Meets target' : '✅' if (\n"
             "            m['results']['test_accuracy'] >= 0.70\n"
             "            if 'resnet' in m['exp_id']\n"
             "            else m['results']['test_accuracy'] >= 0.40\n"
@@ -750,21 +683,19 @@ def create_03_transfer_learning() -> Path:
 
         new_code_cell(
             "# ── Cell 8: Full evaluation best transfer model ─────────────────\n"
-            "# Select best transfer model and run full_evaluation for\n"
-            "# classification report + BI confusion matrix + executive report.\n"
             "import torch\n"
-            "from src.model import get_transfer_model\n"
+            "from src.config import MODELS_DIR\n"
             "from src.evaluate import full_evaluation\n"
-            "from src.config import MODELS_DIR\n\n"
-            "tl_metrics = [metrics_e4, metrics_e5, metrics_e6]\n"
-            "best_tl    = max(tl_metrics, key=lambda m: m['results']['test_accuracy'])\n"
-            "print(f'Best TL experiment: {best_tl[\"exp_id\"]} — {best_tl[\"results\"][\"test_accuracy\"]*100:.2f}%')\n\n"
+            "from src.model import get_transfer_model\n\n"
+            "best_tl = max([metrics_e4, metrics_e5, metrics_e6],\n"
+            "              key=lambda m: m['results']['test_accuracy'])\n"
+            "print(f'Best TL: {best_tl[\"exp_id\"]} — {best_tl[\"results\"][\"test_accuracy\"]*100:.2f}%')\n\n"
             "backbone = best_tl['hyperparameters'].get('backbone', 'resnet18')\n"
             "strategy = best_tl['hyperparameters'].get('strategy', 'frozen')\n"
             "best_tl_model = get_transfer_model(backbone, num_classes=len(class_names), strategy=strategy)\n"
             "best_tl_model.load_state_dict(\n"
             "    torch.load(MODELS_DIR / f'{best_tl[\"exp_id\"]}_best.pt', weights_only=True)\n"
-            ")\n\n"
+            ")\n"
             "eval_tl = full_evaluation(\n"
             "    exp_id      = best_tl['exp_id'],\n"
             "    model       = best_tl_model,\n"
@@ -775,40 +706,29 @@ def create_03_transfer_learning() -> Path:
         ),
 
         new_markdown_cell(
-            "## 6. Analysis — Strengths and Weaknesses\n\n"
+            "## 2. Analysis — Strengths and Weaknesses\n\n"
             "*(Fill after running all experiments)*\n\n"
             "### Strengths\n"
-            "- Transfer Learning reaches ≥70% accuracy with only 10 epochs\n"
-            "- Pretrained ImageNet features generalize well to architectural landmarks\n"
-            "- Fine-tuning layer4 captures domain-specific textures (stone, glass, metal)\n\n"
+            "- Transfer Learning reaches >=70% with only 10 epochs\n"
+            "- ImageNet features generalize well to architectural landmarks\n\n"
             "### Weaknesses\n"
-            "- Visually similar landmarks (e.g. different Roman amphitheaters) cause systematic confusion\n"
-            "- Dataset imbalance biases predictions toward majority classes\n"
-            "- Low-quality or unusual-angle images degrade confidence significantly\n\n"
-            "### Recommended Improvements\n"
-            "- Weighted sampler to address class imbalance\n"
-            "- Test-Time Augmentation (TTA) for ambiguous images\n"
-            "- Add Santa Cruz de la Sierra class for regional coverage\n\n"
+            "- Visually similar landmarks cause systematic confusion\n"
+            "- Dataset imbalance biases toward majority classes\n\n"
             "## Phase 3 — Checklist\n\n"
             "| Check | Status |\n"
             "|---|---|\n"
-            "| 2 pretrained models tested | ✅ (ResNet18, ResNet50) |\n"
-            "| Written model justification | ✅ |\n"
+            "| 2 pretrained models tested | ✅ |\n"
+            "| Written justification | ✅ |\n"
             "| BI narrative curves | ✅ |\n"
-            "| Scratch vs Transfer comparison table | ✅ |\n"
+            "| Scratch vs Transfer table | ✅ |\n"
             "| TorchScript exported | ✅ |\n"
-            "| BI confusion matrix + Top-3 business errors | ✅ |\n"
-            "| Test accuracy ≥70% | ⬜ (fill after run) |\n\n"
-            "**Next step:** `04_inference_app.ipynb` — Phase 4."
+            "| Test accuracy >=70% | ⬜ fill after run |\n\n"
+            "**Next step:** `04_inference_app.ipynb`"
         ),
     ]
 
     nb = new_notebook(cells=cells)
-    nb.metadata["kernelspec"] = {
-        "display_name": "Python (landmark-venv)",
-        "language": "python",
-        "name": "landmark-venv",
-    }
+    nb.metadata["kernelspec"] = _kernel_metadata()
     return _save_notebook(nb, "03_transfer_learning.ipynb")
 
 
@@ -825,60 +745,38 @@ def create_04_inference_app() -> Path:
             "> **Business question:** Can the deployed model correctly identify "
             "landmarks in real-world images not seen during training?\n\n"
             "**Phase 4 rubric targets:**\n"
-            "- `predict_landmarks(img_path, k)` function using TorchScript (Fase 4)\n"
-            "- Test on ≥4 personal images not from the dataset\n"
+            "- predict_landmarks(img_path, k) using TorchScript\n"
+            "- Test on >=4 personal images not from the dataset\n"
             "- Written analysis of strengths and weaknesses\n\n"
-            "> ✅ **This notebook runs on PyCharm (CPU).** Inference is lightweight."
+            "> Run this notebook locally on PyCharm — inference is CPU-friendly."
         ),
 
+        new_code_cell(SETUP_CELL),
+
         new_code_cell(
-            "# ── Cell 1: Environment setup ──────────────────────────────────\n"
-            "import logging\n"
-            "import sys\n"
-            "from pathlib import Path\n\n"
-            "PROJECT_ROOT = Path('..').resolve()\n"
-            "if str(PROJECT_ROOT) not in sys.path:\n"
-            "    sys.path.insert(0, str(PROJECT_ROOT))\n\n"
-            "logging.basicConfig(level=logging.INFO)\n\n"
+            CONFIG_CELL +
             "from src.config import EXTERNAL_DIR, MODELS_DIR, SEED\n"
             "from src.utils import set_seed\n\n"
-            "set_seed(SEED)\n\n"
-            "# List available TorchScript models\n"
+            "set_seed(SEED)\n"
             "scripted_models = sorted(MODELS_DIR.glob('*_scripted.pt'))\n"
             "print('Available TorchScript models:')\n"
             "for m in scripted_models:\n"
             "    print(f'  {m.name}')"
         ),
 
-        new_markdown_cell(
-            "## 1. Select Best Model\n\n"
-            "Load the best-performing TorchScript model from Phase 3.\n"
-            "No model.py dependency — the scripted graph is self-contained."
-        ),
-
         new_code_cell(
             "# ── Cell 2: Select best TorchScript model ───────────────────────\n"
-            "# Why TorchScript for inference:\n"
-            "# The .pt scripted file contains the full computation graph.\n"
-            "# No need to import model.py, config.py, or any src module.\n"
-            "# Deployable to any Python environment with only torch installed.\n\n"
-            "# Select the finetune model if available — highest expected accuracy\n"
+            "# Why TorchScript: self-contained computation graph — no model.py\n"
+            "# dependency. Deployable with only torch installed.\n"
             "finetune_models = [m for m in scripted_models if 'finetune' in m.name]\n"
             "BEST_MODEL_PATH = finetune_models[-1] if finetune_models else scripted_models[-1]\n"
             "print(f'Using model: {BEST_MODEL_PATH.name}')"
         ),
 
-        new_markdown_cell(
-            "## 2. Run predict_landmarks on Personal Images\n\n"
-            "Place ≥4 personal images (JPG or PNG) in `data/external/` before running.\n"
-            "These must be images **not from the Google Landmarks dataset**."
-        ),
-
         new_code_cell(
             "# ── Cell 3: Verify external images ─────────────────────────────\n"
-            "# Why verify before inference:\n"
-            "# A missing or corrupt image raises an unhelpful CUDA error during\n"
-            "# the forward pass. Checking existence here gives a clear error message.\n"
+            "# Why verify before inference: a missing image raises a cryptic\n"
+            "# CUDA error mid-batch. Explicit check gives a clear message.\n"
             "images = (\n"
             "    list(EXTERNAL_DIR.glob('*.jpg'))\n"
             "    + list(EXTERNAL_DIR.glob('*.jpeg'))\n"
@@ -887,21 +785,16 @@ def create_04_inference_app() -> Path:
             ")\n"
             "print(f'External images found: {len(images)}')\n"
             "for img in images:\n"
-            "    print(f'  {img.name}')\n\n"
-            "assert len(images) >= 4, (\n"
-            "    f'Rubric requires >=4 personal images in data/external/. Found: {len(images)}'\n"
-            ")"
+            "    print(f'  {img.name}')\n"
+            "assert len(images) >= 4, f'Rubric requires >=4 images. Found: {len(images)}'"
         ),
 
         new_code_cell(
             "# ── Cell 4: Inference on all external images ────────────────────\n"
-            "# predict_and_display: runs inference + renders BI visualization\n"
-            "# (UCB palette bar chart alongside original image).\n"
-            "# Why display probability bars and not just the top-1 label:\n"
-            "# Production systems show top-3 suggestions — users can correct\n"
-            "# if the top-1 is wrong. Probability bars communicate model confidence.\n"
+            "# Why predict_and_display: renders UCB palette bar chart alongside\n"
+            "# the image — communicates confidence, not just the top-1 label.\n"
             "from src.predictor import predict_and_display\n\n"
-            "all_predictions = {}\n\n"
+            "all_predictions = {}\n"
             "for img_path in images:\n"
             "    print(f'\\n=== {img_path.name} ===')\n"
             "    preds = predict_and_display(\n"
@@ -912,11 +805,6 @@ def create_04_inference_app() -> Path:
             "    all_predictions[img_path.name] = preds\n"
             "    for rank, (name, prob) in enumerate(preds, 1):\n"
             "        print(f'  {rank}. {name.replace(\"_\", \" \")}: {prob:.2%}')"
-        ),
-
-        new_markdown_cell(
-            "## 3. Prediction Summary Table\n\n"
-            "Structured view of all predictions for the written analysis."
         ),
 
         new_code_cell(
@@ -930,52 +818,33 @@ def create_04_inference_app() -> Path:
             "            'Rank'       : rank,\n"
             "            'Prediction' : name.replace('_', ' '),\n"
             "            'Confidence' : f'{prob:.2%}',\n"
-            "        })\n\n"
-            "summary = pd.DataFrame(rows)\n"
-            "print(summary.to_string(index=False))"
+            "        })\n"
+            "print(pd.DataFrame(rows).to_string(index=False))"
         ),
 
         new_markdown_cell(
-            "## 4. Analysis — Strengths and Weaknesses\n\n"
-            "*(Fill based on your prediction results)*\n\n"
+            "## Analysis — Strengths and Weaknesses\n\n"
+            "*(Fill based on prediction results)*\n\n"
             "### Strengths\n"
-            "- High confidence (>80%) on iconic, visually distinctive landmarks\n"
-            "- Top-3 predictions include the correct class even when Top-1 is wrong\n"
-            "- Robust to moderate changes in lighting and viewpoint (augmentation effect)\n\n"
+            "- High confidence on iconic visually distinctive landmarks\n"
+            "- Top-3 includes correct class even when Top-1 is wrong\n\n"
             "### Weaknesses\n"
-            "- Low confidence on landmarks not well-represented in training data\n"
-            "- Confuses architecturally similar structures (e.g. Gothic cathedrals)\n"
-            "- Performance degrades on heavily cropped or extreme-angle images\n\n"
-            "### Possible Improvements\n"
-            "- Ensemble: combine ResNet18 + ResNet50 predictions for borderline cases\n"
-            "- Test-Time Augmentation: average predictions over multiple crops\n"
-            "- Collect more images of weak classes (identified in Executive Report)\n\n"
-            "## Phase 4 — Checklist\n\n"
-            "| Check | Status |\n"
-            "|---|---|\n"
-            "| `predict_landmarks()` uses TorchScript | ✅ |\n"
-            "| ≥4 personal images tested | ✅ |\n"
-            "| Visual results displayed (BI bar chart) | ✅ |\n"
-            "| Prediction summary table | ✅ |\n"
-            "| Written analysis strengths/weaknesses | ✅ |\n\n"
+            "- Low confidence on underrepresented landmarks\n"
+            "- Confuses architecturally similar structures\n\n"
             "## Final Deliverables Checklist\n\n"
             "| Deliverable | Status |\n"
             "|---|---|\n"
             "| GitHub repo public (no dataset) | ⬜ |\n"
             "| All 4 notebooks executed with outputs | ⬜ |\n"
             "| README.md with YouTube link | ⬜ |\n"
-            "| Video 3–5 min uploaded to YouTube | ⬜ |\n"
+            "| Video 3-5 min uploaded | ⬜ |\n"
             "| docs/informe_landmarks.pdf | ⬜ |\n"
             "| git tag v1.0-entrega pushed | ⬜ |"
         ),
     ]
 
     nb = new_notebook(cells=cells)
-    nb.metadata["kernelspec"] = {
-        "display_name": "Python (landmark-venv)",
-        "language": "python",
-        "name": "landmark-venv",
-    }
+    nb.metadata["kernelspec"] = _kernel_metadata()
     return _save_notebook(nb, "04_inference_app.ipynb")
 
 
