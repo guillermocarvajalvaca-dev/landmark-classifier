@@ -1,9 +1,5 @@
 ﻿# === Datos — rúbrica: -1 pt si se incluye dataset ===
 data/raw/
-data/external/*.jpg
-data/external/*.jpeg
-data/external/*.png
-data/external/*.webp
 !data/.gitkeep
 
 # === Modelos pesados ===
