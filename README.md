@@ -1,5 +1,9 @@
 # Landmark Classifier CNN
 
+![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)
+![PyTorch 2.5](https://img.shields.io/badge/PyTorch-2.5-ee4c2c.svg?logo=pytorch)
+![License MIT](https://img.shields.io/badge/license-MIT-green.svg)
+
 > UCB MSc Data Science and AI - Deep Learning Project 5
 > Guillermo Carvajal Vaca - 2026
 
@@ -81,10 +85,6 @@ BI-grade training curves via plotnine with UCB corporate palette:
 - `#C4820E` UCB Dark Gold - Validation / overfitting onset
 
 Each experiment generates: narrative PNG + BI confusion matrix (dpi=200) + Executive Report MD.
-
-## Video
-
-YouTube: https://youtu.be/LINK
 
 ## Tech Stack
 

@@ -1,7 +1,10 @@
-﻿from pathlib import Path
+from pathlib import Path
 
 readme = (
     "# Landmark Classifier CNN\n\n"
+    "![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)\n"
+    "![PyTorch 2.5](https://img.shields.io/badge/PyTorch-2.5-ee4c2c.svg?logo=pytorch)\n"
+    "![License MIT](https://img.shields.io/badge/license-MIT-green.svg)\n\n"
     "> UCB MSc Data Science and AI - Deep Learning Project 5\n"
     "> Guillermo Carvajal Vaca - 2026\n\n"
     "## Overview\n\n"
@@ -60,8 +63,6 @@ readme = (
     "- `#FDB515` UCB Gold - optimal checkpoint marker\n"
     "- `#C4820E` UCB Dark Gold - Validation / overfitting onset\n\n"
     "Each experiment generates: narrative PNG + BI confusion matrix (dpi=200) + Executive Report MD.\n\n"
-    "## Video\n\n"
-    "YouTube: https://youtu.be/LINK\n\n"
     "## Tech Stack\n\n"
     "| Tool | Version | Role |\n"
     "|---|---|---|\n"
