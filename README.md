@@ -1,4 +1,4 @@
-# Landmark Classifier CNN
+﻿# Landmark Classifier CNN
 
 > UCB MSc Data Science and AI - Deep Learning Project 5
 > Guillermo Carvajal Vaca - 2026
@@ -19,9 +19,9 @@ Infers geographic location from images without GPS metadata.
 Subset of Google Landmarks Dataset v2 - 50 classes.
 Provided by UCB instructor. Not included in this repository.
 
-Place at:
+Place the dataset at the root of the project directory:
 
-    G:/My Drive/Maestria Ciencia de Datos/DEEP_LEARNING/PROJECT_01/landmark_images/
+    ./data/landmark_images/
         train/  <- one subfolder per class
         test/   <- same structure
 
@@ -63,12 +63,12 @@ Each run generates: narrative PNG + BI confusion matrix + Executive Report MD.
 
 | Experiment | Type | Test Accuracy |
 |---|---|---|
-| E1_scratch_baseline | CNN Scratch | fill after training |
-| E2_scratch_augmented | CNN Scratch | fill after training |
-| E3_scratch_lower_lr | CNN Scratch | fill after training |
-| E4_resnet18_frozen | Transfer Learning | fill after training |
-| E5_resnet18_finetune_layer4 | Transfer Learning | fill after training |
-| E6_resnet50_frozen | Transfer Learning | fill after training |
+| E1_scratch_baseline | CNN Scratch | 31.84% |
+| E2_scratch_augmented | CNN Scratch | 31.52% |
+| E3_scratch_lower_lr | CNN Scratch | 31.12% |
+| E4_resnet18_frozen | Transfer Learning | 66.00% |
+| E5_resnet18_finetune_layer4 | Transfer Learning | 75.12% |
+| **E6_resnet50_frozen** | **Transfer Learning** | **79.68%** |
 
 ## Video
 
@@ -93,3 +93,5 @@ MIT
 Guillermo Carvajal Vaca
 MSc Data Science and Applied AI - UCB San Pablo - Santa Cruz de la Sierra, Bolivia
 https://github.com/guillermocarvajalvaca-dev
+
+
