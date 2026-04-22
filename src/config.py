@@ -7,7 +7,7 @@
 #                  (>=40%) and Phase 3 threshold (>=70%).
 #                  PyTorch 2.x official documentation.
 # AUTHOR: Guillermo Carvajal Vaca — UCB MSc Data Science & AI
-# VERSION: 1.2.0
+# VERSION: 1.3.0
 # ============================================================
 from __future__ import annotations
 
@@ -33,24 +33,27 @@ _IN_COLAB: bool = (
 )
 
 if _IN_COLAB:
-    # Why Drive path for all artifacts:
-    # /content/ is ephemeral — wiped on every runtime restart.
-    # /content/drive/MyDrive/ persists across sessions — mandatory
-    # for checkpoints and experiment artifacts that take hours to generate.
-    DRIVE_ROOT    : Path = Path("/content/drive/MyDrive/Maestria Ciencia de Datos/DEEP_LEARNING/PROJECT_01")
-    BASE_PATH     : Path = Path("/content/landmark-classifier")
-    DATASET_PATH  : Path = DRIVE_ROOT / "landmark_images"
-    EXPERIMENTS_DIR: Path = DRIVE_ROOT / "landmark-classifier" / "experiments"
-    MODELS_DIR    : Path = DRIVE_ROOT / "landmark-classifier" / "models"
-    DOCS_DIR      : Path = DRIVE_ROOT / "landmark-classifier" / "docs"
+    # Colab: rutas relativas por defecto para cualquier clonador.
+    # Para usar tu Drive personal (persistencia de artefactos), define
+    # en la primera celda del notebook antes de importar src.config:
+    #   import os
+    #   os.environ["LANDMARK_ARTIFACTS_PATH"] = "/content/drive/MyDrive/..."
+    #   os.environ["LANDMARK_DATA_PATH"] = "/content/drive/MyDrive/.../landmark_images"
+    _artifacts_base = os.environ.get("LANDMARK_ARTIFACTS_PATH", "/content/landmark-classifier")
+    _data_path      = os.environ.get("LANDMARK_DATA_PATH", "/content/landmark-classifier/data/landmark_images")
+    
+    BASE_PATH       = Path("/content/landmark-classifier")
+    DATASET_PATH    = Path(_data_path)
+    EXPERIMENTS_DIR = Path(_artifacts_base) / "experiments"
+    MODELS_DIR      = Path(_artifacts_base) / "models"
+    DOCS_DIR        = Path(_artifacts_base) / "docs"
 else:
-    BASE_PATH     = Path(__file__).resolve().parent.parent
-    DATASET_PATH  = Path(
-        r"G:\My Drive\Maestria Ciencia de Datos\DEEP_LEARNING\PROJECT_01\landmark_images"
-    )
-    EXPERIMENTS_DIR: Path = BASE_PATH / "experiments"
-    MODELS_DIR    : Path = BASE_PATH / "models"
-    DOCS_DIR      : Path = BASE_PATH / "docs"
+    # Local: todo relativo al repo. Dataset esperado en ./data/landmark_images/
+    BASE_PATH       = Path(__file__).resolve().parent.parent
+    DATASET_PATH    = BASE_PATH / "data" / "landmark_images"
+    EXPERIMENTS_DIR = BASE_PATH / "experiments"
+    MODELS_DIR      = BASE_PATH / "models"
+    DOCS_DIR        = BASE_PATH / "docs"
 
 logger.debug("Runtime: %s | BASE_PATH: %s", "Colab" if _IN_COLAB else "Local", BASE_PATH)
 
@@ -113,6 +116,6 @@ if __name__ == "__main__":
     print(f"EXPERIMENTS_DIR : {EXPERIMENTS_DIR}")
     print(f"MODELS_DIR      : {MODELS_DIR}")
     if not TRAIN_DIR.exists():
-        logger.warning("TRAIN_DIR not found — verify Google Drive sync")
+        logger.warning("TRAIN_DIR not found — verify dataset location")
     if not TEST_DIR.exists():
-        logger.warning("TEST_DIR not found — verify Google Drive sync")
+        logger.warning("TEST_DIR not found — verify dataset location")
